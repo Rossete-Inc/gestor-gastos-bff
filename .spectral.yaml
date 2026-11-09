@@ -1,0 +1,32 @@
+# Lint do contrato (tarefa 5.3). Regras padrão de OpenAPI mais as
+# convenções do Gestor de Gastos.
+extends: ["spectral:oas"]
+
+rules:
+  # Toda operação documentada, com id estável para o orval gerar o client.
+  operation-operationId: error
+  operation-description: off
+  operation-tags: error
+  operation-success-response: error
+
+  # Erros sempre em application/problem+json (RFC 9457).
+  gg-erros-problem-json:
+    description: Respostas 4xx e 5xx com corpo devem usar application/problem+json.
+    severity: error
+    given: "$.paths[*][*].responses[?(@property >= '400' && @property < '600')].content"
+    then:
+      field: "application/problem+json"
+      function: truthy
+
+  # Valores monetários nunca em float.
+  gg-centavos-inteiros:
+    description: Campos *Centavos devem ser integer int64.
+    severity: error
+    given: "$..properties[?(@property.match(/Centavos$/))]"
+    then:
+      - field: type
+        function: enumeration
+        functionOptions: { values: [integer] }
+      - field: format
+        function: enumeration
+        functionOptions: { values: [int64] }

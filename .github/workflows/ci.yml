@@ -1,0 +1,27 @@
+# Esteira de PR do BFF. Por enquanto só o contrato (tarefa 5.3); os jobs de
+# Go entram com o código na 5.4.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contrato:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Lint do openapi.yaml (Spectral)
+        run: npx -y @stoplight/spectral-cli@6.17.1 lint openapi.yaml --fail-severity=warn --format=github-actions
