@@ -1,0 +1,646 @@
+openapi: 3.0.3
+info:
+  title: Gestor de Gastos — BFF
+  version: 0.1.0
+  description: |
+    API do BFF do Gestor de Gastos. É a única API pública: o front chama só
+    ela, e ela delega aos serviços por Lambda Invoke (ADR 0004).
+
+    Convenções:
+
+    - **Autenticação:** todo endpoint exige o access token do Cognito em
+      `Authorization: Bearer <token>`. Rotas `/admin/*` exigem o grupo
+      `admin`.
+    - **Valores:** sempre em centavos de real, inteiros (`valorCentavos`,
+      `totalCentavos`). Nunca float.
+    - **Percentuais:** inteiros em décimos de ponto percentual
+      (`percentualDecimos`: 750 = 75,0%), calculados pelo método do maior
+      resto para somarem exatamente 1000 em cada visão.
+    - **Datas:** `AAAA-MM-DD` sem fuso; mês `AAAA-MM`. Instantes em ISO 8601
+      UTC.
+    - **Paginação:** cursor opaco em `nextCursor`; ausente na última página.
+      Cursor adulterado ou de outra listagem devolve 400 `cursor_invalido`.
+    - **Erros:** `application/problem+json` (RFC 9457) com `code` estável e,
+      nos 422, `errors[]` por campo.
+    - **Isolamento:** o usuário é sempre o do token. Recurso de outro usuário
+      responde 404, como se não existisse.
+  contact:
+    name: Gestor de Gastos
+    url: https://github.com/Rossete-Inc/gestor-gastos-bff
+  license:
+    name: Proprietária
+    url: https://github.com/Rossete-Inc/gestor-gastos-bff
+
+servers:
+  - url: http://localhost:8080
+    description: cmd/local do BFF (ambiente local)
+
+security:
+  - cognito: []
+
+tags:
+  - name: perfil
+    description: Perfil do usuário autenticado
+  - name: telas
+    description: Dados prontos para cada tela do app
+  - name: gastos
+    description: Lançamento, edição e exclusão de gastos
+  - name: categorias
+    description: Categorias padrão e personalizadas
+  - name: admin
+    description: Gestão de usuários (somente admin)
+
+paths:
+  /me:
+    get:
+      tags: [perfil]
+      operationId: obterMe
+      summary: Perfil do usuário autenticado
+      description: |
+        Devolve o perfil do usuário do token. Se o perfil ainda não existir
+        (evento `UserConfirmed` atrasado ou ambiente local), cria na hora com
+        os dados do Cognito; a criação é idempotente.
+      responses:
+        "200":
+          description: Perfil
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Perfil" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /telas/dashboard:
+    get:
+      tags: [telas]
+      operationId: obterTelaDashboard
+      summary: Painel do mês
+      description: |
+        Totais do mês e por grupo, fatias da pizza nas quatro visões (todas as
+        categorias, só `CARTAO`, só `FIXO` e por grupo) e os 5 gastos mais
+        recentes. Mês sem gastos devolve totais zerados e listas vazias.
+      parameters:
+        - $ref: "#/components/parameters/Mes"
+      responses:
+        "200":
+          description: Painel
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaDashboard" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /telas/gastos:
+    get:
+      tags: [telas]
+      operationId: obterTelaGastos
+      summary: Lista de gastos do mês
+      description: |
+        Gastos do mês, do mais recente para o mais antigo, com filtros
+        opcionais por grupo e categoria e paginação por cursor. Traz também
+        as categorias visíveis, para montar os filtros.
+      parameters:
+        - $ref: "#/components/parameters/Mes"
+        - name: grupo
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/Grupo" }
+        - name: categoriaId
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de gastos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaGastos" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /telas/gasto-form:
+    get:
+      tags: [telas]
+      operationId: obterTelaGastoForm
+      summary: Dados do formulário de gasto
+      description: |
+        Categorias visíveis agrupadas por grupo. Com `id`, devolve também o
+        gasto para a tela de edição; gasto inexistente ou de outro usuário
+        responde 404.
+      parameters:
+        - name: id
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200":
+          description: Dados do formulário
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaGastoForm" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /gastos:
+    post:
+      tags: [gastos]
+      operationId: criarGasto
+      summary: Lançar gasto
+      description: O grupo do gasto é o grupo da categoria escolhida.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GastoIn" }
+      responses:
+        "201":
+          description: Gasto criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Gasto" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /gastos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
+    put:
+      tags: [gastos]
+      operationId: atualizarGasto
+      summary: Editar gasto
+      description: Mesmas validações do lançamento. Trocar a categoria pode trocar o grupo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GastoIn" }
+      responses:
+        "200":
+          description: Gasto atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Gasto" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [gastos]
+      operationId: excluirGasto
+      summary: Excluir gasto
+      responses:
+        "204": { description: Gasto excluído }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /categorias:
+    get:
+      tags: [categorias]
+      operationId: listarCategorias
+      summary: Categorias visíveis ao usuário
+      description: Padrão do sistema e personalizadas do próprio usuário, agrupadas por grupo.
+      responses:
+        "200":
+          description: Categorias
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoriasPorGrupo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [categorias]
+      operationId: criarCategoria
+      summary: Criar categoria personalizada
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoriaIn" }
+      responses:
+        "201":
+          description: Categoria criada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Categoria" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: |
+            Já existe categoria visível com o mesmo nome no grupo, ignorando
+            maiúsculas e minúsculas (`code`: `categoria_duplicada`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /categorias/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
+    delete:
+      tags: [categorias]
+      operationId: excluirCategoria
+      summary: Excluir categoria personalizada
+      responses:
+        "204": { description: Categoria excluída }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "Categoria padrão não pode ser excluída (`code`: `categoria_padrao`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "Há gastos vinculados à categoria (`code`: `categoria_em_uso`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /admin/telas/usuarios:
+    get:
+      tags: [admin]
+      operationId: obterTelaAdminUsuarios
+      summary: Lista de usuários (admin)
+      description: Usuários do mais novo para o mais antigo, paginados.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de usuários
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaAdminUsuarios" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /admin/usuarios/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
+    patch:
+      tags: [admin]
+      operationId: atualizarUsuario
+      summary: Bloquear, reativar ou alterar papel (admin)
+      description: |
+        Bloquear invalida as sessões do usuário e impede novos logins. O admin
+        não pode bloquear a si mesmo nem remover o papel `admin` do último
+        administrador ativo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsuarioPatch" }
+      responses:
+        "200":
+          description: Usuário atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usuario" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Operação recusada pelas regras da conta. `code`:
+            `transicao_invalida`, `bloquear_a_si_mesmo` ou `ultimo_admin`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [admin]
+      operationId: excluirUsuario
+      summary: Excluir usuário (admin)
+      description: |
+        Remove o acesso na hora. Gastos e categorias personalizadas do usuário
+        são apagados de forma assíncrona (evento `UserDeleted`).
+      responses:
+        "204": { description: Usuário excluído }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            Operação recusada pelas regras da conta. `code`:
+            `excluir_a_si_mesmo`, `ultimo_admin` ou `transicao_invalida`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    cognito:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token do Cognito (cognito-local no ambiente local).
+
+  parameters:
+    Mes:
+      name: mes
+      in: query
+      required: true
+      description: Mês no formato AAAA-MM. O app envia o mês corrente no fuso do dispositivo.
+      schema: { $ref: "#/components/schemas/Mes" }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Valor de `nextCursor` da página anterior.
+      schema: { type: string, minLength: 1, maxLength: 2048 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Itens por página.
+      schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 20 }
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+
+  responses:
+    BadRequest:
+      description: Requisição inválida (por exemplo, `cursor_invalido` ou parâmetro malformado)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Token ausente, inválido ou expirado
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: O usuário não tem o papel `admin`
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Recurso inexistente ou de outro usuário
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    UnprocessableEntity:
+      description: Dados inválidos; `errors[]` aponta cada campo
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    InternalError:
+      description: Erro interno; a causa fica só no log
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      description: Erro no formato RFC 9457 com as extensões `code` e `errors`.
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, example: "urn:gestor-gastos:problem:validacao" }
+        title: { type: string, example: Dados inválidos }
+        status: { type: integer, format: int32, example: 422 }
+        detail: { type: string, description: Mensagem em pt-BR que pode ser exibida ao usuário }
+        instance: { type: string, description: Path da requisição }
+        code: { type: string, description: Código estável em snake_case, example: validacao }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/FieldError" }
+
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string, example: valorCentavos }
+        message: { type: string, example: deve ser maior que zero }
+
+    Mes:
+      type: string
+      pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+      example: "2026-11"
+
+    Data:
+      type: string
+      format: date
+      example: "2026-11-03"
+
+    Grupo:
+      type: string
+      enum: [CARTAO, FIXO]
+
+    Papel:
+      type: string
+      enum: [cliente, admin]
+
+    Status:
+      type: string
+      enum: [PENDENTE_CONFIRMACAO, ATIVO, BLOQUEADO, EXCLUIDO]
+
+    Cor:
+      type: string
+      pattern: '^#[0-9A-Fa-f]{6}$'
+      example: "#E4572E"
+
+    Centavos:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Valor em centavos de real.
+      example: 4590
+
+    Perfil:
+      type: object
+      required: [id, email, nome, papel, status, criadoEm]
+      properties:
+        id: { type: string, description: sub do Cognito }
+        email: { type: string, format: email }
+        nome: { type: string }
+        papel: { $ref: "#/components/schemas/Papel" }
+        status: { $ref: "#/components/schemas/Status" }
+        criadoEm: { type: string, format: date-time }
+
+    Usuario:
+      allOf:
+        - $ref: "#/components/schemas/Perfil"
+
+    UsuarioPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: Informe `status`, `papel` ou os dois.
+      properties:
+        status:
+          type: string
+          enum: [ATIVO, BLOQUEADO]
+          description: BLOQUEADO bloqueia; ATIVO reativa.
+        papel: { $ref: "#/components/schemas/Papel" }
+
+    TelaAdminUsuarios:
+      type: object
+      required: [itens]
+      properties:
+        itens:
+          type: array
+          items: { $ref: "#/components/schemas/Usuario" }
+        nextCursor: { type: string }
+
+    Categoria:
+      type: object
+      required: [id, nome, grupo, cor, padrao]
+      properties:
+        id: { type: string, example: alimentacao }
+        nome: { type: string, example: Alimentação }
+        grupo: { $ref: "#/components/schemas/Grupo" }
+        cor: { $ref: "#/components/schemas/Cor" }
+        padrao: { type: boolean, description: "true para as categorias do sistema, que não podem ser excluídas" }
+
+    CategoriaIn:
+      type: object
+      required: [nome, grupo, cor]
+      additionalProperties: false
+      properties:
+        nome: { type: string, minLength: 1, maxLength: 40, example: Pet }
+        grupo: { $ref: "#/components/schemas/Grupo" }
+        cor: { $ref: "#/components/schemas/Cor" }
+
+    CategoriasPorGrupo:
+      type: object
+      required: [CARTAO, FIXO]
+      description: Categorias visíveis, em ordem alfabética dentro de cada grupo.
+      properties:
+        CARTAO:
+          type: array
+          items: { $ref: "#/components/schemas/Categoria" }
+        FIXO:
+          type: array
+          items: { $ref: "#/components/schemas/Categoria" }
+
+    CategoriaResumo:
+      type: object
+      required: [id, nome, cor]
+      properties:
+        id: { type: string }
+        nome: { type: string }
+        cor: { $ref: "#/components/schemas/Cor" }
+
+    GastoIn:
+      type: object
+      required: [valorCentavos, data, categoriaId]
+      additionalProperties: false
+      properties:
+        valorCentavos:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000000
+          description: De R$ 0,01 a R$ 1.000.000,00.
+          example: 4590
+        data: { $ref: "#/components/schemas/Data" }
+        categoriaId: { type: string, minLength: 1, maxLength: 64, example: alimentacao }
+        descricao: { type: string, maxLength: 140, example: Almoço }
+        recorrente: { type: boolean, default: false, description: Só informativo no MVP }
+
+    Gasto:
+      type: object
+      description: Gasto com a categoria já resolvida (nome e cor).
+      required: [id, valorCentavos, data, grupo, categoria, recorrente]
+      properties:
+        id: { type: string }
+        valorCentavos: { type: integer, format: int64, example: 4590 }
+        data: { $ref: "#/components/schemas/Data" }
+        grupo: { $ref: "#/components/schemas/Grupo" }
+        categoria: { $ref: "#/components/schemas/CategoriaResumo" }
+        descricao: { type: string }
+        recorrente: { type: boolean }
+
+    TelaGastos:
+      type: object
+      required: [mes, itens, categorias]
+      properties:
+        mes: { $ref: "#/components/schemas/Mes" }
+        itens:
+          type: array
+          items: { $ref: "#/components/schemas/Gasto" }
+        nextCursor: { type: string }
+        categorias: { $ref: "#/components/schemas/CategoriasPorGrupo" }
+
+    TelaGastoForm:
+      type: object
+      required: [categorias]
+      properties:
+        categorias: { $ref: "#/components/schemas/CategoriasPorGrupo" }
+        gasto: { $ref: "#/components/schemas/Gasto" }
+
+    Fatia:
+      type: object
+      description: Fatia da pizza. Categorias trazem `categoriaId` e `cor`; grupos trazem `grupo`.
+      required: [nome, totalCentavos, percentualDecimos]
+      properties:
+        categoriaId: { type: string }
+        grupo: { $ref: "#/components/schemas/Grupo" }
+        nome: { type: string }
+        cor: { $ref: "#/components/schemas/Cor" }
+        totalCentavos: { $ref: "#/components/schemas/Centavos" }
+        percentualDecimos:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1000
+          description: Décimos de ponto percentual (750 = 75,0%). Somam 1000 em cada visão não vazia.
+
+    TotalGrupo:
+      type: object
+      required: [grupo, totalCentavos]
+      properties:
+        grupo: { $ref: "#/components/schemas/Grupo" }
+        totalCentavos: { $ref: "#/components/schemas/Centavos" }
+
+    TelaDashboard:
+      type: object
+      required: [mes, totalCentavos, totaisPorGrupo, pizza, ultimos]
+      properties:
+        mes: { $ref: "#/components/schemas/Mes" }
+        totalCentavos: { $ref: "#/components/schemas/Centavos" }
+        totaisPorGrupo:
+          type: array
+          description: Sempre CARTAO e FIXO, nessa ordem; a soma é igual a totalCentavos.
+          minItems: 2
+          maxItems: 2
+          items: { $ref: "#/components/schemas/TotalGrupo" }
+        pizza:
+          type: object
+          description: Fatias em ordem decrescente de valor. Listas vazias no mês sem gastos.
+          required: [todas, CARTAO, FIXO, grupos]
+          properties:
+            todas:
+              type: array
+              items: { $ref: "#/components/schemas/Fatia" }
+            CARTAO:
+              type: array
+              items: { $ref: "#/components/schemas/Fatia" }
+            FIXO:
+              type: array
+              items: { $ref: "#/components/schemas/Fatia" }
+            grupos:
+              type: array
+              items: { $ref: "#/components/schemas/Fatia" }
+        ultimos:
+          type: array
+          maxItems: 5
+          description: Até 5 gastos mais recentes do mês.
+          items: { $ref: "#/components/schemas/Gasto" }
