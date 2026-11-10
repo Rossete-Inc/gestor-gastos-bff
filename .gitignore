@@ -1,3 +1,8 @@
 coverage.out
 test.out
 *.test
+
+# Build da Lambda e saída do CDK
+dist/
+infra/cdk.out/
+*.exe

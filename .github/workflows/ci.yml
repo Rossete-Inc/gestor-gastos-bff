@@ -1,24 +1,37 @@
-# Esteira de PR do BFF: contrato, lint e testes, sem AWS e sem deploy.
-# Os workflows reutilizáveis com synth/diff e deploy entram na tarefa 6.3.
+# Esteira do BFF (docs/workflows.md do infra-base):
+#   - pull_request: contrato, testes do CDK, qualidade, build arm64 e cdk diff contra dev
+#   - push na main: qualidade, build, deploy em dev (stack gestor-gastos-dev-bff) e smoke test
 name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  MIN_COVERAGE: "80"
-
 jobs:
+  esteira:
+    uses: Rossete-Inc/gestor-gastos-infra-base/.github/workflows/go-service.yml@main
+    permissions:
+      contents: read
+      id-token: write       # OIDC na AWS
+      pull-requests: write  # comentário do cdk diff
+    with:
+      lambdas: ./cmd/lambda
+      cdk-dir: infra
+      # Parâmetros do SSM lidos no synth e gravados no template
+      # (infra/prerequisitos.go): parâmetro ausente reprova o deploy na main
+      # com mensagem clara; no PR só avisa.
+      cdk-args: --context verificarSsm=${{ github.event_name == 'push' && 'erro' || 'aviso' }}
+      # Token real obrigatório: o fluxo ADMIN_USER_PASSWORD_AUTH e as
+      # permissões cognito-idp da role de deploy vêm do infra-base (PR #16).
+      smoke-test: SMOKE_EXIGIR_TOKEN=1 bash scripts/smoke.sh
+
   contrato:
+    name: Lint do openapi.yaml
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,53 +39,28 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - name: Lint do openapi.yaml (Spectral)
+      - name: Spectral
         run: npx -y @stoplight/spectral-cli@6.17.1 lint openapi.yaml --fail-severity=warn --format=github-actions
 
-  lint:
+  # O app CDK é um módulo Go à parte (infra/go.mod), fora do ./... da raiz
+  # que o go-service.yml testa.
+  infra:
+    name: Testes do CDK (infra/)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: infra/go.mod
+          cache-dependency-path: infra/go.sum
       - name: go mod tidy sem diferenças
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
-      - name: gofmt
-        run: |
-          fora=$(gofmt -l .)
-          if [ -n "$fora" ]; then
-            echo "Arquivos fora do gofmt:"; echo "$fora"; exit 1
-          fi
       - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.15
-
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: Testes (inclui a validação das respostas contra o openapi.yaml)
-        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./... | tee test.out
-      - name: Cobertura mínima por pacote
-        run: |
-          echo "| Pacote | Cobertura |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          falhou=0
-          while read -r pacote pct; do
-            echo "| \`$pacote\` | $pct% |" >> "$GITHUB_STEP_SUMMARY"
-            if awk -v p="$pct" -v m="$MIN_COVERAGE" 'BEGIN { exit !(p < m) }'; then
-              echo "::error::$pacote tem $pct% de cobertura, abaixo de $MIN_COVERAGE%"
-              falhou=1
-            fi
-          done < <(grep -E '^ok' test.out | sed -E 's/^ok[[:space:]]+([^[:space:]]+).*coverage: ([0-9.]+)%.*/\1 \2/')
-          echo "Total: $(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')" >> "$GITHUB_STEP_SUMMARY"
-          exit $falhou
+      - name: Testes de assertion (sem AWS e sem build da Lambda)
+        run: go test -count=1 -cover ./...
