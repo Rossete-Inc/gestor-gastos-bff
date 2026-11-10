@@ -75,8 +75,12 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/me
 | `internal/me` | `GET /me`: obtém o perfil e, se não existir, cria com e-mail e nome do Cognito e papel dos grupos |
 | `internal/cognito` | Lê e-mail e nome com o próprio access token (`GetUser`) |
 | `internal/usuarios` | Client do users-service sobre o `invoke` da go-commons |
+| `internal/lambdahttp` | Converte o evento da HTTP API (payload 2.0) em `http.Request` e a resposta de volta |
 | `internal/authtest` | Emite tokens de teste assinados por um JWKS local |
 | `cmd/local` | Servidor HTTP local |
+| `cmd/lambda` | Lambda na AWS: o mesmo handler, com o users-service por Lambda Invoke |
+| `infra/` | App CDK (módulo Go à parte) da stack `gestor-gastos-dev-bff` |
+| `scripts/smoke.sh` | Smoke test de `GET /me` em dev, rodado pela esteira depois do deploy |
 
 Os testes da `internal/api` validam cada resposta contra o `openapi.yaml` com o kin-openapi. Se o código divergir do contrato, o teste falha.
 
@@ -92,3 +96,54 @@ O [`.spectral.yaml`](.spectral.yaml) estende as regras padrão de OpenAPI e acre
 - todo campo `*Centavos` é `integer` `int64`.
 
 A esteira roda o lint do contrato, o lint de Go e os testes em todo PR, e reprova o pacote que ficar abaixo de 80% de cobertura.
+
+## Deploy na AWS (dev)
+
+A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-service.yml` do infra-base. No PR: qualidade, build arm64, testes do CDK e `cdk diff` comentado. No merge na `main`: deploy em `dev` e smoke test. **Ordem do primeiro deploy:** infra-base (auth e api) → users-service → BFF.
+
+### Stack `gestor-gastos-dev-bff`
+
+| Recurso | Configuração |
+| --- | --- |
+| Lambda `gestor-gastos-dev-bff` | `provided.al2023`, arm64, 256 MB, timeout de 10 s, sem VPC; binário `dist/lambda/bootstrap` de `./cmd/lambda` |
+| Alias `live` + CodeDeploy | `CodeDeployDefault.LambdaCanary10Percent5Minutes`, rollback automático em falha, parada ou alarme |
+| Alarme `gestor-gastos-dev-bff-erros` | Qualquer erro da função no alias em 1 minuto; reverte o canary |
+| Logs `/aws/lambda/gestor-gastos-dev-bff` | 7 dias |
+| Rotas na HTTP API do infra-base | Uma rota por operação do `openapi.yaml` (13), todas com o authorizer JWT do infra-base e a integração `AWS_PROXY` (payload 2.0) com o alias `live`. A API, o stage, o CORS e a rota `GET /infra/auth-check` continuam no infra-base |
+| Permissões | A HTTP API invoca só o alias `live`; a Lambda invoca só o alias do users-service |
+
+Parâmetros do SSM:
+
+| Parâmetro | Sentido | Uso |
+| --- | --- | --- |
+| `/gestor-gastos/dev/auth/issuer-url`, `auth/user-pool-client-id`, `auth/jwks-url` | lido (infra-base) | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL` |
+| `/gestor-gastos/dev/api/id`, `api/authorizer-id` | lido (infra-base) | Rotas e integração |
+| `/gestor-gastos/dev/users/function-arn` | lido (users-service) | `USERS_FUNCTION_ARN` e `lambda:InvokeFunction` |
+| `/gestor-gastos/dev/bff/function-arn` | publicado | ARN do alias `live` do BFF |
+
+Os valores são lidos pelo CloudFormation no deploy, então o synth e os testes rodam sem AWS. Com o contexto `verificarSsm=erro` (deploy na `main`), o synth consulta o SSM antes e falha dizendo qual parâmetro falta e quem o publica, sem criar nada. No PR, com `verificarSsm=aviso`, a falta vira só aviso.
+
+Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL` e `USERS_FUNCTION_ARN`. O CORS é feito pela HTTP API.
+
+### Smoke test
+
+[`scripts/smoke.sh`](scripts/smoke.sh) roda depois do deploy, com a role de deploy:
+
+1. `GET /me` sem token: 401 do authorizer.
+2. Garante o usuário `smoke-test@example.com` no User Pool (criado sem e-mail de convite), troca a senha por uma aleatória a cada execução e pede um access token com `ADMIN_USER_PASSWORD_AUTH`. Nenhuma senha fica guardada.
+3. `GET /me` com o token: 200 com o perfil do usuário de smoke test.
+
+Os passos 2 e 3 dependem de duas mudanças no infra-base. Enquanto elas não existirem, são pulados com um aviso no job (`SMOKE_EXIGIR_TOKEN=1` torna isso um erro):
+
+- `infra/auth.go`: `AuthFlows: &awscognito.AuthFlow{UserSrp: jsii.Bool(true), AdminUserPassword: jsii.Bool(true)}` no app client (`ALLOW_ADMIN_USER_PASSWORD_AUTH`). O fluxo só é aceito com credenciais IAM, então não muda nada para o app público.
+- `infra/cicd.go`: na role `gh-deploy-gestor-gastos-bff-dev`, `cognito-idp:AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword` e `AdminInitiateAuth` em `arn:aws:cognito-idp:us-east-1:<conta>:userpool/*`.
+
+### Comandos locais (sem AWS)
+
+```sh
+go test ./...                                   # BFF, incluindo o cmd/lambda
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -trimpath -ldflags="-s -w" -o dist/lambda/bootstrap ./cmd/lambda
+cd infra
+go test ./...                                   # testes de assertion do CDK
+npx --yes aws-cdk@2.1148.0 synth --context env=dev   # template em infra/cdk.out
+```
