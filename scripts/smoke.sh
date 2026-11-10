@@ -16,11 +16,11 @@
 #      sob demanda no primeiro acesso, design.md), o que exercita BFF ->
 #      Lambda Invoke -> users-service -> DynamoDB.
 #
-# O passo 2 depende de uma mudança no infra-base (fluxo
+# O passo 2 depende do infra-base (PR #16): fluxo
 # ALLOW_ADMIN_USER_PASSWORD_AUTH no app client e permissões cognito-idp na
-# role de deploy do BFF; ver o README). Enquanto ela não existir, o passo 2 e
-# o 3 são pulados com um aviso no job, e só o passo 1 vale. Com
-# SMOKE_EXIGIR_TOKEN=1, a falta dessa configuração reprova o smoke test.
+# role de deploy do BFF (ver o README). Com SMOKE_EXIGIR_TOKEN=1 (o que o
+# ci.yml usa), a falta dessa configuração reprova o smoke test. Sem a
+# variável, os passos 2 e 3 são pulados com um aviso e só o passo 1 vale.
 #
 # Localmente, com credenciais de admin em dev:
 #   AMBIENTE=dev bash scripts/smoke.sh

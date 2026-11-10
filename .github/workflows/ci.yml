@@ -22,10 +22,13 @@ jobs:
     with:
       lambdas: ./cmd/lambda
       cdk-dir: infra
-      # Pré-requisitos no SSM (infra/prerequisitos.go): parâmetro ausente
-      # reprova o deploy na main com mensagem clara; no PR só avisa.
+      # Parâmetros do SSM lidos no synth e gravados no template
+      # (infra/prerequisitos.go): parâmetro ausente reprova o deploy na main
+      # com mensagem clara; no PR só avisa.
       cdk-args: --context verificarSsm=${{ github.event_name == 'push' && 'erro' || 'aviso' }}
-      smoke-test: bash scripts/smoke.sh
+      # Token real obrigatório: o fluxo ADMIN_USER_PASSWORD_AUTH e as
+      # permissões cognito-idp da role de deploy vêm do infra-base (PR #16).
+      smoke-test: SMOKE_EXIGIR_TOKEN=1 bash scripts/smoke.sh
 
   contrato:
     name: Lint do openapi.yaml

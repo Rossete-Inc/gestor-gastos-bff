@@ -23,15 +23,18 @@ type BffProps struct {
 	// Codigo é o pacote da Lambda. nil = binário ausente: a stack registra
 	// MsgFaltaBuild e não é sintetizada.
 	Codigo awslambda.Code
+	// Valores são os Prerequisitos lidos do SSM no synth (esteira). nil = cada
+	// valor vira um parâmetro do CloudFormation resolvido no deploy (offline).
+	Valores Valores
 }
 
 // NovaStackBff cria a Lambda do BFF (alias live com canary do CodeDeploy) e
 // publica as rotas do contrato na HTTP API do infra-base, protegidas pelo
 // authorizer JWT de lá.
 //
-// Tudo o que vem de outros repositórios é lido do SSM no deploy (parâmetros
-// do CloudFormation do tipo AWS::SSM::Parameter::Value<String>), sem exports
-// e sem consulta à AWS no synth: o synth e os testes rodam offline.
+// Tudo o que vem de outros repositórios vem do SSM, sem exports: na esteira,
+// com os valores lidos no synth (props.Valores); offline, como parâmetros do
+// CloudFormation (ver prerequisitos.go).
 func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk.Stack {
 	stack := awscdk.NewStack(scope, jsii.String(id), &props.StackProps)
 	env := props.Ambiente
@@ -42,6 +45,9 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 	}
 
 	ler := func(param string) *string {
+		if props.Valores != nil {
+			return jsii.String(props.Valores[param])
+		}
 		return awsssm.StringParameter_ValueForStringParameter(stack, jsii.String(CaminhoSSM(env, param)), nil)
 	}
 	apiID := ler(ParamAPIID)

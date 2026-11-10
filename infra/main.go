@@ -23,14 +23,28 @@ import (
 type Opcoes struct {
 	// DirLambda é a pasta do bootstrap (DirLambda).
 	DirLambda string
-	// Buscar consulta o SSM; só é chamado com o contexto verificarSsm ligado.
-	Buscar BuscarAusentes
+	// Buscar consulta o SSM; só é chamado na esteira (ModoVerificacao).
+	Buscar BuscarParametros
+	// Lookup lê variáveis de ambiente (os.LookupEnv); nil = nenhuma.
+	Lookup func(string) (string, bool)
 }
 
 // NovoApp monta o app e devolve a stack do BFF.
 func NovoApp(app awscdk.App, o Opcoes) awscdk.Stack {
 	env := Ambiente(app)
-	modo := ModoVerificacao(app)
+	if o.Lookup == nil {
+		o.Lookup = func(string) (string, bool) { return "", false }
+	}
+	modo := ModoVerificacao(app, o.Lookup)
+
+	// Na esteira, lê os pré-requisitos antes de montar a stack e grava os
+	// valores no template. Se faltar algum, a stack usa os parâmetros do
+	// CloudFormation e recebe as mensagens (erro no deploy, aviso no PR).
+	var valores Valores
+	var msgs []string
+	if modo != "" {
+		valores, msgs = LerPrerequisitos(context.Background(), env, o.Buscar)
+	}
 
 	awscdk.Tags_Of(app).Add(jsii.String("projeto"), jsii.String(Projeto), nil)
 	awscdk.Tags_Of(app).Add(jsii.String("repositorio"), jsii.String(Repositorio), nil)
@@ -40,11 +54,9 @@ func NovoApp(app awscdk.App, o Opcoes) awscdk.Stack {
 		StackProps: awscdk.StackProps{Env: ambienteAws()},
 		Ambiente:   env,
 		Codigo:     CodigoLambda(o.DirLambda),
+		Valores:    valores,
 	})
-
-	if modo != "" {
-		anotarPrerequisitos(stack, modo, MensagensPrerequisitos(context.Background(), env, o.Buscar))
-	}
+	anotarPrerequisitos(stack, modo, msgs)
 	return stack
 }
 
@@ -73,18 +85,18 @@ func ambienteAws() *awscdk.Environment {
 
 // buscarNoSSM cria o client SSM só quando a verificação roda, com as
 // credenciais padrão (as da esteira).
-func buscarNoSSM(ctx context.Context, nomes []string) ([]string, error) {
+func buscarNoSSM(ctx context.Context, nomes []string) (map[string]string, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(Regiao))
 	if err != nil {
 		return nil, err
 	}
-	return AusentesNoSSM(ssm.NewFromConfig(cfg))(ctx, nomes)
+	return ParametrosNoSSM(ssm.NewFromConfig(cfg))(ctx, nomes)
 }
 
 func main() {
 	defer jsii.Close()
 
 	app := awscdk.NewApp(nil)
-	NovoApp(app, Opcoes{DirLambda: DirLambda, Buscar: buscarNoSSM})
+	NovoApp(app, Opcoes{DirLambda: DirLambda, Buscar: buscarNoSSM, Lookup: os.LookupEnv})
 	app.Synth(nil)
 }

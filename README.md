@@ -121,7 +121,11 @@ Parâmetros do SSM:
 | `/gestor-gastos/dev/users/function-arn` | lido (users-service) | `USERS_FUNCTION_ARN` e `lambda:InvokeFunction` |
 | `/gestor-gastos/dev/bff/function-arn` | publicado | ARN do alias `live` do BFF |
 
-Os valores são lidos pelo CloudFormation no deploy, então o synth e os testes rodam sem AWS. Com o contexto `verificarSsm=erro` (deploy na `main`), o synth consulta o SSM antes e falha dizendo qual parâmetro falta e quem o publica, sem criar nada. No PR, com `verificarSsm=aviso`, a falta vira só aviso.
+Na esteira, o app lê esses parâmetros no synth (`ssm:GetParameters`, com as credenciais do job) e grava os valores no template. Isso é obrigatório: a role de deploy do bootstrap do CDK só lê o parâmetro de versão do bootstrap, então um parâmetro do CloudFormation do tipo `AWS::SSM::Parameter::Value<String>` falharia no `CreateChangeSet` com AccessDenied. É o mesmo tratamento do users-service. O modo vem do contexto `verificarSsm`, que o `ci.yml` passa; sem ele, a variável `AMBIENTE` do `go-service.yml` liga o modo `erro`:
+
+- `erro` (deploy na `main`): parâmetro ausente reprova o synth dizendo qual falta e quem o publica, sem criar nada.
+- `aviso` (`cdk diff` no PR): a falta vira aviso, e a stack volta aos parâmetros do CloudFormation.
+- Sem contexto e sem `AMBIENTE` (testes e synth local): nada é consultado, e cada valor vira um parâmetro do CloudFormation (`valueForStringParameter`), resolvido só no deploy.
 
 Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL` e `USERS_FUNCTION_ARN`. O CORS é feito pela HTTP API.
 
@@ -133,7 +137,7 @@ Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COG
 2. Garante o usuário `smoke-test@example.com` no User Pool (criado sem e-mail de convite), troca a senha por uma aleatória a cada execução e pede um access token com `ADMIN_USER_PASSWORD_AUTH`. Nenhuma senha fica guardada.
 3. `GET /me` com o token: 200 com o perfil do usuário de smoke test.
 
-Os passos 2 e 3 dependem de duas mudanças no infra-base. Enquanto elas não existirem, são pulados com um aviso no job (`SMOKE_EXIGIR_TOKEN=1` torna isso um erro):
+Os passos 2 e 3 dependem de duas mudanças no infra-base (PR #16). O `ci.yml` roda com `SMOKE_EXIGIR_TOKEN=1`, então a falta delas reprova o smoke test. Sem a variável, os passos são pulados com um aviso:
 
 - `infra/auth.go`: `AuthFlows: &awscognito.AuthFlow{UserSrp: jsii.Bool(true), AdminUserPassword: jsii.Bool(true)}` no app client (`ALLOW_ADMIN_USER_PASSWORD_AUTH`). O fluxo só é aceito com credenciais IAM, então não muda nada para o app público.
 - `infra/cicd.go`: na role `gh-deploy-gestor-gastos-bff-dev`, `cognito-idp:AdminGetUser`, `AdminCreateUser`, `AdminSetUserPassword` e `AdminInitiateAuth` em `arn:aws:cognito-idp:us-east-1:<conta>:userpool/*`.

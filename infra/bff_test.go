@@ -17,11 +17,12 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/assertions"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/jsii-runtime-go"
 )
 
 // Testes de assertion da stack do BFF. Rodam sem AWS e sem compilar a
-// Lambda: o bootstrap é um arquivo falso e o SSM é lido só no deploy.
+// Lambda: o bootstrap é um arquivo falso e o SSM, quando lido no synth, é falso.
 
 const stackTeste = "gestor-gastos-dev-bff"
 
@@ -35,8 +36,26 @@ func dirLambdaFake(t *testing.T) string {
 	return dir
 }
 
-// nenhumAusente é o SSM com todos os parâmetros publicados.
-func nenhumAusente(context.Context, []string) ([]string, error) { return nil, nil }
+// valorFalso é o valor que o SSM falso devolve para cada caminho.
+func valorFalso(nome string) string {
+	if strings.HasSuffix(nome, ParamUsersFunctionArn) {
+		return "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-users:live"
+	}
+	return "valor:" + nome
+}
+
+// ssmFalso devolve todos os nomes pedidos, menos os ausentes.
+func ssmFalso(ausentes ...string) BuscarParametros {
+	return func(_ context.Context, nomes []string) (map[string]string, error) {
+		m := map[string]string{}
+		for _, n := range nomes {
+			if !slices.Contains(ausentes, n) {
+				m[n] = valorFalso(n)
+			}
+		}
+		return m, nil
+	}
+}
 
 func appTeste(t *testing.T, contexto map[string]interface{}, o Opcoes) awscdk.Stack {
 	t.Helper()
@@ -44,8 +63,8 @@ func appTeste(t *testing.T, contexto map[string]interface{}, o Opcoes) awscdk.St
 		o.DirLambda = dirLambdaFake(t)
 	}
 	if o.Buscar == nil {
-		o.Buscar = func(context.Context, []string) ([]string, error) {
-			t.Error("o SSM não deveria ser consultado sem o contexto verificarSsm")
+		o.Buscar = func(context.Context, []string) (map[string]string, error) {
+			t.Error("o SSM não deveria ser consultado fora da esteira")
 			return nil, nil
 		}
 	}
@@ -285,9 +304,10 @@ func TestSemBinarioFalhaComMensagemClara(t *testing.T) {
 
 func TestPrerequisitoAusenteReprovaODeploy(t *testing.T) {
 	var consultados []string
-	buscar := func(_ context.Context, nomes []string) ([]string, error) {
+	falso := ssmFalso("/gestor-gastos/dev/users/function-arn")
+	buscar := func(ctx context.Context, nomes []string) (map[string]string, error) {
 		consultados = nomes
-		return []string{"/gestor-gastos/dev/users/function-arn"}, nil
+		return falso(ctx, nomes)
 	}
 	stack := appTeste(t, map[string]interface{}{"verificarSsm": "erro"}, Opcoes{Buscar: buscar})
 
@@ -300,23 +320,63 @@ func TestPrerequisitoAusenteReprovaODeploy(t *testing.T) {
 	anot.HasNoWarning(jsii.String("*"), assertions.Match_AnyValue())
 }
 
+func TestEsteiraSemContextoValeErro(t *testing.T) {
+	lookup := func(k string) (string, bool) { return "dev", k == VariavelAmbienteEsteira }
+	stack := appTeste(t, map[string]interface{}{}, Opcoes{Buscar: ssmFalso("/gestor-gastos/dev/api/id"), Lookup: lookup})
+	assertions.Annotations_FromStack(stack).HasError(jsii.String("/"+stackTeste),
+		assertions.Match_StringLikeRegexp(jsii.String("/gestor-gastos/dev/api/id não existe no SSM.*gestor-gastos-infra-base")))
+}
+
 func TestPrerequisitoAusenteNoPrViraAviso(t *testing.T) {
-	buscar := func(context.Context, []string) ([]string, error) {
-		return []string{"/gestor-gastos/dev/users/function-arn"}, nil
-	}
-	stack := appTeste(t, map[string]interface{}{"verificarSsm": "aviso"}, Opcoes{Buscar: buscar})
+	stack := appTeste(t, map[string]interface{}{"verificarSsm": "aviso"},
+		Opcoes{Buscar: ssmFalso("/gestor-gastos/dev/users/function-arn")})
 	anot := assertions.Annotations_FromStack(stack)
 	anot.HasWarning(jsii.String("/"+stackTeste), assertions.Match_StringLikeRegexp(jsii.String("users/function-arn")))
 	anot.HasNoError(jsii.String("*"), assertions.Match_AnyValue())
+	// Sem todos os valores, a stack volta aos parâmetros do CloudFormation.
+	paramSSM(t, assertions.Template_FromStack(stack, nil), ParamUsersFunctionArn)
 }
 
-func TestPrerequisitosPresentes(t *testing.T) {
-	stack := appTeste(t, map[string]interface{}{"verificarSsm": "erro"}, Opcoes{Buscar: nenhumAusente})
+// Na esteira, os valores lidos no synth vão direto para o template: a role
+// de deploy do bootstrap não consegue resolver parâmetros do SSM.
+func TestNaEsteiraGravaOsValoresNoTemplate(t *testing.T) {
+	stack := appTeste(t, map[string]interface{}{"verificarSsm": "erro"}, Opcoes{Buscar: ssmFalso()})
 	assertions.Annotations_FromStack(stack).HasNoError(jsii.String("*"), assertions.Match_AnyValue())
+	tpl := assertions.Template_FromStack(stack, nil)
+	v := func(param string) string { return valorFalso(CaminhoSSM("dev", param)) }
+
+	// Só sobra o parâmetro de versão do bootstrap, que a role de deploy lê.
+	for id, p := range *tpl.FindParameters(jsii.String("*"), nil) {
+		if d, _ := (*p)["Default"].(string); strings.HasPrefix(d, PrefixoSSM("dev")) {
+			t.Errorf("parâmetro do CloudFormation %s ainda lê %s no deploy", id, d)
+		}
+	}
+	tpl.HasResourceProperties(jsii.String("AWS::Lambda::Function"), map[string]interface{}{
+		"Environment": map[string]interface{}{"Variables": map[string]interface{}{
+			"COGNITO_ISSUER":     v(ParamIssuerURL),
+			"COGNITO_CLIENT_ID":  v(ParamUserPoolClientID),
+			"COGNITO_JWKS_URL":   v(ParamJwksURL),
+			"USERS_FUNCTION_ARN": v(ParamUsersFunctionArn),
+		}},
+	})
+	tpl.HasResourceProperties(jsii.String("AWS::ApiGatewayV2::Route"), map[string]interface{}{
+		"RouteKey":          "GET /me",
+		"ApiId":             v(ParamAPIID),
+		"AuthorizationType": "JWT",
+		"AuthorizerId":      v(ParamAuthorizerID),
+	})
+	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
+		"PolicyDocument": map[string]interface{}{
+			"Statement": []interface{}{map[string]interface{}{
+				"Sid": "InvocarUsersService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
+				"Resource": v(ParamUsersFunctionArn),
+			}},
+		},
+	})
 }
 
 func TestFalhaAoLerOSSM(t *testing.T) {
-	buscar := func(context.Context, []string) ([]string, error) { return nil, errors.New("AccessDenied") }
+	buscar := func(context.Context, []string) (map[string]string, error) { return nil, errors.New("AccessDenied") }
 	stack := appTeste(t, map[string]interface{}{"verificarSsm": "erro"}, Opcoes{Buscar: buscar})
 	assertions.Annotations_FromStack(stack).HasError(jsii.String("/"+stackTeste),
 		assertions.Match_StringLikeRegexp(jsii.String("não foi possível ler os pré-requisitos.*AccessDenied")))
@@ -355,14 +415,16 @@ func (f *fakeSSM) GetParameters(_ context.Context, in *ssm.GetParametersInput, _
 	}
 	out := &ssm.GetParametersOutput{}
 	for _, n := range in.Names {
-		if !f.existentes[n] {
+		if f.existentes[n] {
+			out.Parameters = append(out.Parameters, ssmtypes.Parameter{Name: jsii.String(n), Value: jsii.String("v" + n)})
+		} else {
 			out.InvalidParameters = append(out.InvalidParameters, n)
 		}
 	}
 	return out, nil
 }
 
-func TestAusentesNoSSM(t *testing.T) {
+func TestParametrosNoSSM(t *testing.T) {
 	var nomes []string
 	existentes := map[string]bool{}
 	for i := range 12 {
@@ -371,25 +433,21 @@ func TestAusentesNoSSM(t *testing.T) {
 		existentes[n] = i%5 != 0
 	}
 	f := &fakeSSM{existentes: existentes}
-	ausentes, err := AusentesNoSSM(f)(context.Background(), nomes)
+	valores, err := ParametrosNoSSM(f)(context.Background(), nomes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.chamadas != 2 || !slices.Equal(ausentes, []string{"/p/00", "/p/05", "/p/10"}) {
-		t.Errorf("chamadas = %d, ausentes = %v", f.chamadas, ausentes)
+	if f.chamadas != 2 || len(valores) != 9 || valores["/p/01"] != "v/p/01" {
+		t.Errorf("chamadas = %d, valores = %v", f.chamadas, valores)
+	}
+	for _, n := range []string{"/p/00", "/p/05", "/p/10"} {
+		if _, ok := valores[n]; ok {
+			t.Errorf("%s não existe e não deveria voltar", n)
+		}
 	}
 
-	if _, err := AusentesNoSSM(&fakeSSM{err: errors.New("throttling")})(context.Background(), nomes); err == nil {
+	if _, err := ParametrosNoSSM(&fakeSSM{err: errors.New("throttling")})(context.Background(), nomes); err == nil {
 		t.Error("esperava erro")
-	}
-}
-
-func TestMensagemDeParametroSemOrigemConhecida(t *testing.T) {
-	msgs := MensagensPrerequisitos(context.Background(), "dev", func(context.Context, []string) ([]string, error) {
-		return []string{"/gestor-gastos/dev/outro"}, nil
-	})
-	if len(msgs) != 1 || !strings.Contains(msgs[0], "repositório dono do parâmetro") {
-		t.Errorf("msgs = %v", msgs)
 	}
 }
 
