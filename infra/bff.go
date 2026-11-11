@@ -52,6 +52,7 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 	}
 	apiID := ler(ParamAPIID)
 	usersArn := ler(ParamUsersFunctionArn)
+	categoriesArn := ler(ParamCategoriesFunctionArn)
 
 	nome := NomeStack(env, "bff")
 	logs := awslogs.NewLogGroup(stack, jsii.String("Logs"), &awslogs.LogGroupProps{
@@ -72,21 +73,27 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 		LogGroup:     logs,
 		// Variáveis lidas por cmd/lambda (LoadConfig).
 		Environment: &map[string]*string{
-			"RUNTIME":            jsii.String("aws"),
-			"ENV":                jsii.String(env),
-			"LOG_LEVEL":          jsii.String("info"),
-			"COGNITO_ISSUER":     ler(ParamIssuerURL),
-			"COGNITO_CLIENT_ID":  ler(ParamUserPoolClientID),
-			"COGNITO_JWKS_URL":   ler(ParamJwksURL),
-			"USERS_FUNCTION_ARN": usersArn,
+			"RUNTIME":                 jsii.String("aws"),
+			"ENV":                     jsii.String(env),
+			"LOG_LEVEL":               jsii.String("info"),
+			"COGNITO_ISSUER":          ler(ParamIssuerURL),
+			"COGNITO_CLIENT_ID":       ler(ParamUserPoolClientID),
+			"COGNITO_JWKS_URL":        ler(ParamJwksURL),
+			"USERS_FUNCTION_ARN":      usersArn,
+			"CATEGORIES_FUNCTION_ARN": categoriesArn,
 		},
 	})
 
-	// O BFF só invoca o alias live do users-service (ADR 0004).
+	// O BFF só invoca o alias live de cada serviço (ADR 0004).
 	fn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Sid:       jsii.String("InvocarUsersService"),
 		Actions:   jsii.Strings("lambda:InvokeFunction"),
 		Resources: &[]*string{usersArn},
+	}))
+	fn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Sid:       jsii.String("InvocarCategoriesService"),
+		Actions:   jsii.Strings("lambda:InvokeFunction"),
+		Resources: &[]*string{categoriesArn},
 	}))
 
 	alias := awslambda.NewAlias(stack, jsii.String("Live"), &awslambda.AliasProps{

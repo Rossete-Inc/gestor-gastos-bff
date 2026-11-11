@@ -41,6 +41,9 @@ func valorFalso(nome string) string {
 	if strings.HasSuffix(nome, ParamUsersFunctionArn) {
 		return "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-users:live"
 	}
+	if strings.HasSuffix(nome, ParamCategoriesFunctionArn) {
+		return "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-categories:live"
+	}
 	return "valor:" + nome
 }
 
@@ -128,13 +131,14 @@ func TestLambdaArm64Com256MB(t *testing.T) {
 		"MemorySize":    256,
 		"Timeout":       10,
 		"Environment": map[string]interface{}{"Variables": map[string]interface{}{
-			"RUNTIME":            "aws",
-			"ENV":                "dev",
-			"LOG_LEVEL":          "info",
-			"COGNITO_ISSUER":     ref(paramSSM(t, tpl, ParamIssuerURL)),
-			"COGNITO_CLIENT_ID":  ref(paramSSM(t, tpl, ParamUserPoolClientID)),
-			"COGNITO_JWKS_URL":   ref(paramSSM(t, tpl, ParamJwksURL)),
-			"USERS_FUNCTION_ARN": ref(paramSSM(t, tpl, ParamUsersFunctionArn)),
+			"RUNTIME":                 "aws",
+			"ENV":                     "dev",
+			"LOG_LEVEL":               "info",
+			"COGNITO_ISSUER":          ref(paramSSM(t, tpl, ParamIssuerURL)),
+			"COGNITO_CLIENT_ID":       ref(paramSSM(t, tpl, ParamUserPoolClientID)),
+			"COGNITO_JWKS_URL":        ref(paramSSM(t, tpl, ParamJwksURL)),
+			"USERS_FUNCTION_ARN":      ref(paramSSM(t, tpl, ParamUsersFunctionArn)),
+			"CATEGORIES_FUNCTION_ARN": ref(paramSSM(t, tpl, ParamCategoriesFunctionArn)),
 		}},
 	})
 	// Sem VPC: custo zero parado e sem NAT.
@@ -259,17 +263,26 @@ func TestRotasNaHttpApiDoInfraBase(t *testing.T) {
 	}
 }
 
-func TestInvocaSoOUsersService(t *testing.T) {
+func TestInvocaSoOsAliasDosServicos(t *testing.T) {
 	tpl := templateTeste(t)
 	usersID := paramSSM(t, tpl, ParamUsersFunctionArn)
+	categoriesID := paramSSM(t, tpl, ParamCategoriesFunctionArn)
 	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
 		"PolicyDocument": map[string]interface{}{
-			"Statement": []interface{}{map[string]interface{}{
-				"Sid":      "InvocarUsersService",
-				"Action":   "lambda:InvokeFunction",
-				"Effect":   "Allow",
-				"Resource": ref(usersID),
-			}},
+			"Statement": []interface{}{
+				map[string]interface{}{
+					"Sid":      "InvocarUsersService",
+					"Action":   "lambda:InvokeFunction",
+					"Effect":   "Allow",
+					"Resource": ref(usersID),
+				},
+				map[string]interface{}{
+					"Sid":      "InvocarCategoriesService",
+					"Action":   "lambda:InvokeFunction",
+					"Effect":   "Allow",
+					"Resource": ref(categoriesID),
+				},
+			},
 		},
 	})
 }
@@ -353,10 +366,11 @@ func TestNaEsteiraGravaOsValoresNoTemplate(t *testing.T) {
 	}
 	tpl.HasResourceProperties(jsii.String("AWS::Lambda::Function"), map[string]interface{}{
 		"Environment": map[string]interface{}{"Variables": map[string]interface{}{
-			"COGNITO_ISSUER":     v(ParamIssuerURL),
-			"COGNITO_CLIENT_ID":  v(ParamUserPoolClientID),
-			"COGNITO_JWKS_URL":   v(ParamJwksURL),
-			"USERS_FUNCTION_ARN": v(ParamUsersFunctionArn),
+			"COGNITO_ISSUER":          v(ParamIssuerURL),
+			"COGNITO_CLIENT_ID":       v(ParamUserPoolClientID),
+			"COGNITO_JWKS_URL":        v(ParamJwksURL),
+			"USERS_FUNCTION_ARN":      v(ParamUsersFunctionArn),
+			"CATEGORIES_FUNCTION_ARN": v(ParamCategoriesFunctionArn),
 		}},
 	})
 	tpl.HasResourceProperties(jsii.String("AWS::ApiGatewayV2::Route"), map[string]interface{}{
@@ -367,10 +381,16 @@ func TestNaEsteiraGravaOsValoresNoTemplate(t *testing.T) {
 	})
 	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
 		"PolicyDocument": map[string]interface{}{
-			"Statement": []interface{}{map[string]interface{}{
-				"Sid": "InvocarUsersService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
-				"Resource": v(ParamUsersFunctionArn),
-			}},
+			"Statement": []interface{}{
+				map[string]interface{}{
+					"Sid": "InvocarUsersService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
+					"Resource": v(ParamUsersFunctionArn),
+				},
+				map[string]interface{}{
+					"Sid": "InvocarCategoriesService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
+					"Resource": v(ParamCategoriesFunctionArn),
+				},
+			},
 		},
 	})
 }

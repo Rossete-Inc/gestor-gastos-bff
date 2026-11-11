@@ -13,6 +13,7 @@ import (
 
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/authtest"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/lambdahttp"
+	catcontract "github.com/Rossete-Inc/gestor-gastos-categories-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/aws/aws-lambda-go/events"
@@ -20,7 +21,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 )
 
-const usersArn = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-users:live"
+const (
+	usersArn      = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-users:live"
+	categoriesArn = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-categories:live"
+)
 
 func env(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
@@ -28,11 +32,12 @@ func env(m map[string]string) func(string) (string, bool) {
 
 func valido() map[string]string {
 	return map[string]string{
-		"RUNTIME":          "aws",
-		"ENV":              "dev",
-		VarCognitoIssuer:   "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_abc",
-		VarCognitoClientID: "client",
-		VarUsersFunction:   usersArn,
+		"RUNTIME":             "aws",
+		"ENV":                 "dev",
+		VarCognitoIssuer:      "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_abc",
+		VarCognitoClientID:    "client",
+		VarUsersFunction:      usersArn,
+		VarCategoriesFunction: categoriesArn,
 	}
 }
 
@@ -41,7 +46,7 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Base.Env != "dev" || c.Base.Region != "us-east-1" || c.UsersFunction != usersArn || c.CognitoJWKSURL != "" {
+	if c.Base.Env != "dev" || c.Base.Region != "us-east-1" || c.UsersFunction != usersArn || c.CategoriesFunction != categoriesArn || c.CognitoJWKSURL != "" {
 		t.Errorf("config = %+v", c)
 	}
 }
@@ -51,11 +56,12 @@ func TestLoadConfigRecusa(t *testing.T) {
 		mudar func(m map[string]string)
 		msg   string
 	}{
-		"sem RUNTIME":   {func(m map[string]string) { delete(m, "RUNTIME") }, "RUNTIME"},
-		"RUNTIME=local": {func(m map[string]string) { m["RUNTIME"], m["ENV"] = "local", "local" }, "RUNTIME=aws"},
-		"sem issuer":    {func(m map[string]string) { delete(m, VarCognitoIssuer) }, VarCognitoIssuer},
-		"sem client":    {func(m map[string]string) { delete(m, VarCognitoClientID) }, VarCognitoClientID},
-		"sem users":     {func(m map[string]string) { delete(m, VarUsersFunction) }, VarUsersFunction},
+		"sem RUNTIME":    {func(m map[string]string) { delete(m, "RUNTIME") }, "RUNTIME"},
+		"RUNTIME=local":  {func(m map[string]string) { m["RUNTIME"], m["ENV"] = "local", "local" }, "RUNTIME=aws"},
+		"sem issuer":     {func(m map[string]string) { delete(m, VarCognitoIssuer) }, VarCognitoIssuer},
+		"sem client":     {func(m map[string]string) { delete(m, VarCognitoClientID) }, VarCognitoClientID},
+		"sem users":      {func(m map[string]string) { delete(m, VarUsersFunction) }, VarUsersFunction},
+		"sem categories": {func(m map[string]string) { delete(m, VarCategoriesFunction) }, VarCategoriesFunction},
 	}
 	for nome, c := range casos {
 		t.Run(nome, func(t *testing.T) {
@@ -70,7 +76,8 @@ func TestLoadConfigRecusa(t *testing.T) {
 }
 
 // fakeAWS imita o endpoint de Invoke da Lambda: responde ObterPerfil com um
-// perfil existente e guarda a função chamada.
+// perfil existente e ListarCategorias com uma categoria padrão, e guarda a
+// função chamada.
 type fakeAWS struct {
 	mu      sync.Mutex
 	funcoes []string
@@ -90,8 +97,19 @@ func (f *fakeAWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var req invoke.Request
 	b, _ := io.ReadAll(r.Body)
-	if err := json.Unmarshal(b, &req); err != nil || req.Operation != contract.OpObterPerfil {
+	if err := json.Unmarshal(b, &req); err != nil {
 		http.Error(w, "envelope inesperado: "+string(b), http.StatusBadRequest)
+		return
+	}
+	if req.Operation == catcontract.OpListarCategorias {
+		lista, _ := json.Marshal(catcontract.CategoriasPorGrupo{
+			Cartao: []catcontract.Categoria{{ID: "alimentacao", Nome: "Alimentação", Grupo: "CARTAO", Cor: "#F97316", Padrao: true}},
+		})
+		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: lista})
+		return
+	}
+	if req.Operation != contract.OpObterPerfil {
+		http.Error(w, "operação inesperada: "+req.Operation, http.StatusBadRequest)
 		return
 	}
 	perfil, _ := json.Marshal(contract.Perfil{ID: req.UserID, Email: "ana@exemplo.com", Nome: "Ana", Papel: contract.PapelCliente, Status: contract.StatusAtivo})
@@ -159,6 +177,33 @@ func TestMeInvocaOUsersServicePorLambda(t *testing.T) {
 	}
 }
 
+func TestCategoriasInvocaOCategoriesServicePorLambda(t *testing.T) {
+	emissor := authtest.New(t)
+	m := valido()
+	m[VarCognitoIssuer] = emissor.Issuer
+	m[VarCognitoClientID] = authtest.ClientID
+	c, err := LoadConfig(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeAWS{}
+	h, err := NewHandler(c, awsFake(t, fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := chamar(t, lambdahttp.Handler(h), http.MethodGet, "/categorias", emissor.Token(t, "user-1", authtest.Opcoes{}))
+	if out.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, corpo = %s", out.StatusCode, out.Body)
+	}
+	if out.Body != `{"CARTAO":[{"id":"alimentacao","nome":"Alimentação","grupo":"CARTAO","cor":"#F97316","padrao":true}],"FIXO":[]}`+"\n" {
+		t.Errorf("corpo = %s", out.Body)
+	}
+	if len(fake.funcoes) != 1 || fake.funcoes[0] != categoriesArn {
+		t.Errorf("funções invocadas = %v", fake.funcoes)
+	}
+}
+
 func TestRun(t *testing.T) {
 	// Sem arquivos de configuração da máquina: o teste não depende de ~/.aws.
 	t.Setenv("AWS_CONFIG_FILE", t.TempDir()+"/nao-existe")
@@ -188,10 +233,11 @@ func TestNewHandlerRecusa(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	semIssuer, semUsers := c, c
+	semIssuer, semUsers, semCategories := c, c, c
 	semIssuer.CognitoIssuer = ""
 	semUsers.UsersFunction = ""
-	for nome, cfg := range map[string]Config{"sem issuer": semIssuer, "sem users": semUsers} {
+	semCategories.CategoriesFunction = ""
+	for nome, cfg := range map[string]Config{"sem issuer": semIssuer, "sem users": semUsers, "sem categories": semCategories} {
 		t.Run(nome, func(t *testing.T) {
 			if h, err := NewHandler(cfg, aws.Config{Region: "us-east-1"}); err == nil || h != nil {
 				t.Errorf("NewHandler = %v, %v", h, err)
