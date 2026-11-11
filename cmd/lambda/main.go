@@ -87,6 +87,8 @@ func NewHandler(c Config, awsCfg aws.Config) (http.Handler, error) {
 	}
 
 	// CORS é feito pela HTTP API (infra-base), por isso sem CORSOrigins aqui.
+	// Sem Categorias até a tarefa 7.6 (deploy do categories-service): as rotas
+	// de categorias respondem 501 em dev.
 	return api.New(api.Deps{
 		Tokens: tokens,
 		Me:     me.New(usuarios.New(transporte), cognito.New(cip.NewFromConfig(awsCfg))),

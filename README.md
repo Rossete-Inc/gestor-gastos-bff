@@ -27,7 +27,7 @@ Convenções (detalhes no `info.description` do contrato):
 
 ## Rodar localmente
 
-O BFF local usa o cognito-local do infra-base e o `cmd/local` de cada serviço. Em três terminais:
+O BFF local usa o cognito-local do infra-base e o `cmd/local` de cada serviço. Em quatro terminais:
 
 ```sh
 # 1. infra-base: emuladores
@@ -36,7 +36,10 @@ task local:up
 # 2. users-service
 RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8082
 
-# 3. bff (este repositório)
+# 3. categories-service
+RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8083
+
+# 4. bff (este repositório)
 set -a; source ../gestor-gastos-infra-base/local/.env.cognito; set +a
 RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8080
 ```
@@ -47,6 +50,7 @@ RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8080
 | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID` | Obrigatórias; vêm do `.env.cognito` |
 | `COGNITO_ENDPOINT` | `http://localhost:9229` |
 | `USERS_SERVICE_URL` | `http://127.0.0.1:8082` |
+| `CATEGORIES_SERVICE_URL` | `http://127.0.0.1:8083` |
 | `HOST`, `PORT` | `127.0.0.1`, `8080` |
 | `CORS_ORIGINS` | `http://localhost:8081` (Expo web); aceita várias, separadas por vírgula |
 
@@ -58,6 +62,21 @@ TOKEN=$(aws cognito-idp initiate-auth --endpoint-url $COGNITO_ENDPOINT --client-
   --query AuthenticationResult.AccessToken --output text)
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/me
 ```
+
+Categorias (tarefa 7.3):
+
+```sh
+B=http://127.0.0.1:8080; H="Authorization: Bearer $TOKEN"
+J='Content-Type: application/json'
+curl -s -H "$H" $B/categorias                                    # 12 padrão + as suas, por grupo
+curl -s -H "$H" -H "$J" -X POST $B/categorias -d '{"nome":"Pet","grupo":"CARTAO","cor":"#17BEBB"}'   # 201 com o id
+curl -s -H "$H" -H "$J" -X POST $B/categorias -d '{"nome":"pet","grupo":"CARTAO","cor":"#17BEBB"}'   # 409 categoria_duplicada
+curl -s -H "$H" -X DELETE $B/categorias/alimentacao              # 403 categoria_padrao
+curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -X DELETE $B/categorias/<id>   # 204
+curl -s -H "$H" $B/telas/gasto-form                              # {"categorias":{...}}
+```
+
+Na AWS, as rotas de categorias respondem 501 até o deploy do categories-service (tarefa 7.6). Também ficam para depois: a edição de gasto em `/telas/gasto-form?id=` e o bloqueio de exclusão de categoria com gastos (409 `categoria_em_uso`), ambos na tarefa 8.3.
 
 ## Estado das rotas
 
@@ -75,6 +94,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/me
 | `internal/me` | `GET /me`: obtém o perfil e, se não existir, cria com e-mail e nome do Cognito e papel dos grupos |
 | `internal/cognito` | Lê e-mail e nome com o próprio access token (`GetUser`) |
 | `internal/usuarios` | Client do users-service sobre o `invoke` da go-commons |
+| `internal/categorias` | Client do categories-service sobre o `invoke` da go-commons |
 | `internal/lambdahttp` | Converte o evento da HTTP API (payload 2.0) em `http.Request` e a resposta de volta |
 | `internal/authtest` | Emite tokens de teste assinados por um JWKS local |
 | `cmd/local` | Servidor HTTP local |
