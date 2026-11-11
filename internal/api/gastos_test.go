@@ -29,6 +29,9 @@ type fakeGastos struct {
 	emUso     bool
 	err       error
 	errListar error
+	resumo    expcontract.ResumoMensalOut
+	mes       string
+	errResumo error
 }
 
 func (f *fakeGastos) registrar(op, userID string) {
@@ -93,6 +96,12 @@ func (f *fakeGastos) ExisteNaCategoria(_ context.Context, userID, categoriaID st
 	f.registrar("ExisteNaCategoria", userID)
 	f.id = categoriaID
 	return f.emUso, f.err
+}
+
+func (f *fakeGastos) ResumoMensal(_ context.Context, userID, mes string) (expcontract.ResumoMensalOut, error) {
+	f.registrar("ResumoMensal", userID)
+	f.mes = mes
+	return f.resumo, f.errResumo
 }
 
 func montarGastos(t *testing.T, cats *fakeCategorias, gastos *fakeGastos) (http.Handler, string) {

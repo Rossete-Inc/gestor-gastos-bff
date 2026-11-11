@@ -22,11 +22,13 @@ type GastosService interface {
 	Excluir(ctx context.Context, userID, id string) error
 	Listar(ctx context.Context, userID string, in expcontract.ListarGastosIn) (expcontract.PaginaGastos, error)
 	ExisteNaCategoria(ctx context.Context, userID, categoriaID string) (bool, error)
+	ResumoMensal(ctx context.Context, userID, mes string) (expcontract.ResumoMensalOut, error)
 }
 
 // rotasGastos são servidas quando Deps.Gastos e Deps.Categorias estão
 // presentes. Sem eles (Lambda antes da tarefa 8.5), continuam em 501.
 var rotasGastos = []string{
+	"GET /telas/dashboard",
 	"GET /telas/gastos",
 	"POST /gastos",
 	"PUT /gastos/{id}",
@@ -44,6 +46,7 @@ const (
 var padraoMes = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 
 func (a *api) rotasDeGastos(mux *http.ServeMux) {
+	mux.Handle("GET /telas/dashboard", a.autenticado(http.HandlerFunc(a.telaDashboard)))
 	mux.Handle("GET /telas/gastos", a.autenticado(http.HandlerFunc(a.telaGastos)))
 	mux.Handle("POST /gastos", a.autenticado(http.HandlerFunc(a.criarGasto)))
 	mux.Handle("PUT /gastos/{id}", a.autenticado(http.HandlerFunc(a.atualizarGasto)))

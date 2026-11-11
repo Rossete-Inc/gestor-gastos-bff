@@ -66,3 +66,20 @@ func (c *Client) ExisteNaCategoria(ctx context.Context, userID, categoriaID stri
 	err := c.c.Call(ctx, contract.OpExisteGastoNaCategoria, userID, contract.ExisteGastoNaCategoriaIn{CategoriaID: categoriaID}, &out)
 	return out.Existe, err
 }
+
+// ResumoMensal devolve os totais do mês e os 5 gastos mais recentes, para o
+// painel. As listas vêm sempre não nulas.
+func (c *Client) ResumoMensal(ctx context.Context, userID, mes string) (contract.ResumoMensalOut, error) {
+	var out contract.ResumoMensalOut
+	err := c.c.Call(ctx, contract.OpResumoMensal, userID, contract.ResumoMensalIn{Mes: mes}, &out)
+	if out.TotaisPorGrupo == nil {
+		out.TotaisPorGrupo = []contract.TotalGrupo{}
+	}
+	if out.TotaisPorCategoria == nil {
+		out.TotaisPorCategoria = []contract.TotalCategoria{}
+	}
+	if out.Recentes == nil {
+		out.Recentes = []contract.Gasto{}
+	}
+	return out, err
+}

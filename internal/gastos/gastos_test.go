@@ -63,6 +63,10 @@ func novoServico() *servico {
 		}
 		return contract.ExisteGastoNaCategoriaOut{}, nil
 	}))
+	s.r.Handle(contract.OpResumoMensal, invoke.Typed(func(_ context.Context, _ string, in contract.ResumoMensalIn) (any, error) {
+		// Um serviço que omitisse as listas: o client devolve [] mesmo assim.
+		return map[string]any{"mes": in.Mes, "totalCentavos": 0}, nil
+	}))
 	return s
 }
 
@@ -123,5 +127,19 @@ func TestRepassaErroDoServico(t *testing.T) {
 	_, err := New(novoServico()).Obter(context.Background(), "u-1", "g-9")
 	if !errors.Is(err, errs.NotFound(contract.CodigoNaoEncontrado, "")) {
 		t.Errorf("erro = %v", err)
+	}
+}
+
+func TestResumoMensal(t *testing.T) {
+	s := novoServico()
+	r, err := New(s).ResumoMensal(context.Background(), "u-1", "2026-11")
+	if err != nil || r.Mes != "2026-11" || s.ultimo.Operation != contract.OpResumoMensal || s.ultimo.UserID != "u-1" {
+		t.Fatalf("resumo = %+v, %v (%+v)", r, err, s.ultimo)
+	}
+	if string(s.ultimo.Payload) != `{"mes":"2026-11"}` {
+		t.Errorf("payload = %s", s.ultimo.Payload)
+	}
+	if r.TotaisPorGrupo == nil || r.TotaisPorCategoria == nil || r.Recentes == nil {
+		t.Errorf("listas nulas: %#v", r)
 	}
 }
