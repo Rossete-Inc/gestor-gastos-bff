@@ -27,7 +27,7 @@ Convenções (detalhes no `info.description` do contrato):
 
 ## Rodar localmente
 
-O BFF local usa o cognito-local do infra-base e o `cmd/local` de cada serviço. Em quatro terminais:
+O BFF local usa o cognito-local do infra-base e o `cmd/local` de cada serviço. Em cinco terminais:
 
 ```sh
 # 1. infra-base: emuladores
@@ -39,7 +39,10 @@ RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8082
 # 3. categories-service
 RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8083
 
-# 4. bff (este repositório)
+# 4. expenses-service
+RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8084
+
+# 5. bff (este repositório)
 set -a; source ../gestor-gastos-infra-base/local/.env.cognito; set +a
 RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8080
 ```
@@ -51,6 +54,7 @@ RUNTIME=local go run ./cmd/local          # http://127.0.0.1:8080
 | `COGNITO_ENDPOINT` | `http://localhost:9229` |
 | `USERS_SERVICE_URL` | `http://127.0.0.1:8082` |
 | `CATEGORIES_SERVICE_URL` | `http://127.0.0.1:8083` |
+| `EXPENSES_SERVICE_URL` | `http://127.0.0.1:8084` |
 | `HOST`, `PORT` | `127.0.0.1`, `8080` |
 | `CORS_ORIGINS` | `http://localhost:8081` (Expo web); aceita várias, separadas por vírgula |
 
@@ -76,15 +80,36 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -X DELETE $B/categorias/<id>   
 curl -s -H "$H" $B/telas/gasto-form                              # {"categorias":{...}}
 ```
 
-Ficam para depois: a edição de gasto em `/telas/gasto-form?id=` e o bloqueio de exclusão de categoria com gastos (409 `categoria_em_uso`), ambos na tarefa 8.3.
+Gastos (tarefa 8.3). O grupo do gasto vem da categoria; o cliente não o envia:
+
+```sh
+curl -s -H "$H" -H "$J" -X POST $B/gastos -d '{"valorCentavos":4590,"data":"2026-11-03","categoriaId":"alimentacao","descricao":"Almoço"}'   # 201
+curl -s -H "$H" -H "$J" -X POST $B/gastos -d '{"valorCentavos":0,"data":"2026-11-03","categoriaId":"alimentacao"}'   # 422 valorCentavos
+curl -s -H "$H" -H "$J" -X POST $B/gastos -d '{"valorCentavos":100,"data":"2026-11-03","categoriaId":"nao-existe"}'   # 422 categoriaId
+curl -s -H "$H" "$B/telas/gastos?mes=2026-11&grupo=CARTAO&limit=20"   # itens com nome e cor da categoria + nextCursor
+curl -s -H "$H" "$B/telas/gasto-form?id=<id>"                       # categorias + o gasto para edição
+curl -s -H "$H" -H "$J" -X PUT $B/gastos/<id> -d '{"valorCentavos":9990,"data":"2026-11-04","categoriaId":"internet"}'   # 200; data nova = id novo
+curl -s -H "$H" -X DELETE $B/categorias/internet                     # 403 (padrão); numa personalizada com gastos, 409 categoria_em_uso
+curl -s -o /dev/null -w '%{http_code}
+' -H "$H" -X DELETE $B/gastos/<id>   # 204
+```
+
+Regras do BFF nas rotas de gastos:
+
+- **Categoria do gasto:** o BFF busca a categoria no categories-service (`ObterCategoria`). Inexistente ou de outro usuário vira 422 no campo `categoriaId`, e o expenses-service nem é chamado.
+- **Categoria em uso:** antes de excluir uma categoria, o BFF pergunta ao expenses-service (`ExisteGastoNaCategoria`) e responde 409 `categoria_em_uso`. A corrida entre a checagem e a exclusão é aceita no MVP.
+- **Categoria removida:** um gasto cuja categoria não está mais entre as visíveis aparece com a categoria "Removida" (cor `#9E9E9E`).
+- **Telas:** `/telas/gastos` e `/telas/gasto-form?id=` buscam gastos e categorias em paralelo.
+- **Query string:** `mes` fora de `AAAA-MM`, `grupo` fora de `CARTAO`/`FIXO`, `limit` fora de 1 a 100 ou `categoriaId` vazio respondem 400 `parametro_invalido`.
 
 ## Estado das rotas
 
 | Rota | Estado |
 | --- | --- |
 | `GET /me` | Implementada (5.4) |
-| `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. `?id=` no formulário e o 409 `categoria_em_uso` chegam na 8.3 |
-| Gastos, `/telas/gastos` e `/telas/dashboard` | Respondem 501 `nao_implementado` depois da autenticação. Chegam nas fatias 3 e 4 |
+| `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. O 409 `categoria_em_uso` e o `?id=` do formulário entraram na 8.3 |
+| `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas no `cmd/local` (8.3). Na Lambda respondem 501 até o expenses-service subir em `dev` (8.5); até lá, `?id=` no formulário também responde 501 e a exclusão de categoria não consulta gastos |
+| `/telas/dashboard` | Responde 501 `nao_implementado` depois da autenticação. Chega na fatia 4 |
 | `/admin/*` | Respondem 401 sem token, 403 para quem não é admin e 501 para admin. Chegam na fatia 5 |
 
 ## Estrutura
@@ -96,6 +121,7 @@ Ficam para depois: a edição de gasto em `/telas/gasto-form?id=` e o bloqueio d
 | `internal/cognito` | Lê e-mail e nome com o próprio access token (`GetUser`) |
 | `internal/usuarios` | Client do users-service sobre o `invoke` da go-commons |
 | `internal/categorias` | Client do categories-service sobre o `invoke` da go-commons |
+| `internal/gastos` | Client do expenses-service sobre o `invoke` da go-commons |
 | `internal/lambdahttp` | Converte o evento da HTTP API (payload 2.0) em `http.Request` e a resposta de volta |
 | `internal/authtest` | Emite tokens de teste assinados por um JWKS local |
 | `cmd/local` | Servidor HTTP local |

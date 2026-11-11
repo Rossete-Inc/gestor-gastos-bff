@@ -32,6 +32,20 @@ func (f *fakeCategorias) Listar(_ context.Context, userID string) (catcontract.C
 	return f.lista, f.err
 }
 
+// Obter procura na lista, como o serviço: fora dela é 404.
+func (f *fakeCategorias) Obter(_ context.Context, userID, id string) (catcontract.Categoria, error) {
+	f.chamada, f.userID, f.id = "Obter", userID, id
+	if f.err != nil {
+		return catcontract.Categoria{}, f.err
+	}
+	for _, c := range append(f.lista.Cartao, f.lista.Fixo...) {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return catcontract.Categoria{}, errs.NotFound(catcontract.CodigoNaoEncontrada, "Categoria não encontrada.")
+}
+
 func (f *fakeCategorias) Criar(_ context.Context, userID string, in catcontract.CriarCategoriaIn) (catcontract.Categoria, error) {
 	f.chamada, f.userID, f.in = "Criar", userID, in
 	if f.err != nil {
@@ -221,7 +235,7 @@ func TestTelaGastoForm(t *testing.T) {
 		t.Errorf("corpo = %s", rec.Body.String())
 	}
 
-	// Edição de gasto depende do expenses-service (tarefa 8.3).
+	// Sem o expenses-service (Lambda antes da 8.5), a edição segue em 501.
 	_, rec = fazer(h, http.MethodGet, "/telas/gasto-form?id=g-1", tok)
 	if rec.Code != http.StatusNotImplemented {
 		t.Errorf("com id: status = %d, quer 501", rec.Code)

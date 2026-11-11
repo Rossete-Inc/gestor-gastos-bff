@@ -1,6 +1,6 @@
 // Command local roda o BFF na máquina do desenvolvedor, contra o
 // cognito-local do infra-base e o cmd/local de cada serviço (users-service
-// na 8082 e categories-service na 8083).
+// na 8082, categories-service na 8083 e expenses-service na 8084).
 //
 //	set -a; source <infra-base>/local/.env.cognito; set +a
 //	RUNTIME=local go run ./cmd/local
@@ -22,6 +22,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/api"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/categorias"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/cognito"
+	"github.com/Rossete-Inc/gestor-gastos-bff/internal/gastos"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/me"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/usuarios"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/auth"
@@ -45,6 +46,7 @@ type Config struct {
 	CognitoEndpoint string
 	UsersURL        string
 	CategoriesURL   string
+	ExpensesURL     string
 	CORSOrigins     []string
 }
 
@@ -68,6 +70,7 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 		CognitoEndpoint: r.Get("COGNITO_ENDPOINT", "http://localhost:9229"),
 		UsersURL:        r.Get("USERS_SERVICE_URL", "http://127.0.0.1:8082"),
 		CategoriesURL:   r.Get("CATEGORIES_SERVICE_URL", "http://127.0.0.1:8083"),
+		ExpensesURL:     r.Get("EXPENSES_SERVICE_URL", "http://127.0.0.1:8084"),
 	}
 	for _, o := range strings.Split(r.Get("CORS_ORIGINS", "http://localhost:8081"), ",") {
 		if o = strings.TrimSpace(o); o != "" {
@@ -79,7 +82,7 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 	}
 	for nome, e := range map[string]string{
 		"COGNITO_ISSUER": c.CognitoIssuer, "COGNITO_ENDPOINT": c.CognitoEndpoint, "USERS_SERVICE_URL": c.UsersURL,
-		"CATEGORIES_SERVICE_URL": c.CategoriesURL,
+		"CATEGORIES_SERVICE_URL": c.CategoriesURL, "EXPENSES_SERVICE_URL": c.ExpensesURL,
 	} {
 		if err := exigirLocal(nome, e); err != nil {
 			return Config{}, err
@@ -116,6 +119,10 @@ func NewHandler(c Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	transporteGastos, err := invoke.NewTransport(c.Base.Runtime, c.ExpensesURL, nil, nil)
+	if err != nil {
+		return nil, err
+	}
 	cognitoAPI := cip.New(cip.Options{
 		Region:       c.Base.Region,
 		BaseEndpoint: aws.String(c.CognitoEndpoint),
@@ -126,6 +133,7 @@ func NewHandler(c Config) (http.Handler, error) {
 		Tokens:      tokens,
 		Me:          me.New(usuarios.New(transporte), cognito.New(cognitoAPI)),
 		Categorias:  categorias.New(transporteCategorias),
+		Gastos:      gastos.New(transporteGastos),
 		Log:         log,
 		CORSOrigins: c.CORSOrigins,
 	}), nil
@@ -157,8 +165,8 @@ func run(ctx context.Context, lookup config.LookupFunc) error {
 	defer stop()
 	erro := make(chan error, 1)
 	go func() { erro <- srv.ListenAndServe() }()
-	fmt.Printf("BFF local em http://%s (users-service: %s, categories-service: %s, cognito: %s)\n",
-		srv.Addr, cfg.UsersURL, cfg.CategoriesURL, cfg.CognitoEndpoint)
+	fmt.Printf("BFF local em http://%s (users-service: %s, categories-service: %s, expenses-service: %s, cognito: %s)\n",
+		srv.Addr, cfg.UsersURL, cfg.CategoriesURL, cfg.ExpensesURL, cfg.CognitoEndpoint)
 
 	select {
 	case err := <-erro:
