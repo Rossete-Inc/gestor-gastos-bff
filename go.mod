@@ -3,6 +3,7 @@ module github.com/Rossete-Inc/gestor-gastos-bff
 go 1.27.0
 
 require (
+	github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44
 	github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1
 	github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261109183359-8173383e54b4
 	github.com/aws/aws-lambda-go v1.55.1
@@ -33,5 +34,5 @@ require (
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )

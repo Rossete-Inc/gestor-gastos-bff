@@ -25,7 +25,7 @@ func TestLoadConfigPadroes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Host != "127.0.0.1" || c.Port != "8080" || c.UsersURL != "http://127.0.0.1:8082" ||
+	if c.Host != "127.0.0.1" || c.Port != "8080" || c.UsersURL != "http://127.0.0.1:8082" || c.CategoriesURL != "http://127.0.0.1:8083" ||
 		c.CognitoEndpoint != "http://localhost:9229" || len(c.CORSOrigins) != 1 || c.CORSOrigins[0] != "http://localhost:8081" {
 		t.Errorf("config = %+v", c)
 	}
@@ -50,7 +50,10 @@ func TestLoadConfigRecusa(t *testing.T) {
 			m["COGNITO_ISSUER"] = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_x"
 		},
 		"users-service remoto": func(m map[string]string) { m["USERS_SERVICE_URL"] = "https://exemplo.com" },
-		"endpoint inválido":    func(m map[string]string) { m["COGNITO_ENDPOINT"] = "localhost:9229" },
+		"categories-service remoto": func(m map[string]string) {
+			m["CATEGORIES_SERVICE_URL"] = "https://exemplo.com"
+		},
+		"endpoint inválido": func(m map[string]string) { m["COGNITO_ENDPOINT"] = "localhost:9229" },
 	}
 	for nome, mudar := range casos {
 		t.Run(nome, func(t *testing.T) {
