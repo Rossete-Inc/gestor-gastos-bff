@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	catcontract "github.com/Rossete-Inc/gestor-gastos-categories-service/contract"
+	expcontract "github.com/Rossete-Inc/gestor-gastos-expenses-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/auth"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 )
@@ -17,6 +18,7 @@ import (
 // *categorias.Client o satisfaz.
 type CategoriasService interface {
 	Listar(ctx context.Context, userID string) (catcontract.CategoriasPorGrupo, error)
+	Obter(ctx context.Context, userID, id string) (catcontract.Categoria, error)
 	Criar(ctx context.Context, userID string, in catcontract.CriarCategoriaIn) (catcontract.Categoria, error)
 	Excluir(ctx context.Context, userID, id string) error
 }
@@ -85,8 +87,20 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 		a.erro(w, r, err)
 		return
 	}
-	// A checagem de gastos vinculados (409 categoria_em_uso) entra com o
-	// expenses-service, na tarefa 8.3.
+	// Regra que atravessa serviços, por isso no BFF (design.md): categoria
+	// com gastos não é excluída. A corrida entre a checagem e a exclusão é
+	// aceita no MVP; o gasto órfão aparece com a categoria "Removida".
+	if a.deps.Gastos != nil {
+		emUso, err := a.deps.Gastos.ExisteNaCategoria(r.Context(), c.UserID, id)
+		if err != nil {
+			a.erro(w, r, err)
+			return
+		}
+		if emUso {
+			a.erro(w, r, errs.Conflict("categoria_em_uso", "Há gastos nesta categoria. Mova ou exclua os gastos antes de excluí-la."))
+			return
+		}
+	}
 	if err := a.deps.Categorias.Excluir(r.Context(), c.UserID, id); err != nil {
 		a.erro(w, r, err)
 		return
@@ -94,25 +108,48 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// telaGastoForm devolve as categorias para o formulário de gasto. O modo de
-// edição (?id=) precisa do expenses-service e chega na tarefa 8.3.
+// telaGastoForm devolve as categorias para o formulário de gasto e, com
+// ?id=, também o gasto para a tela de edição. O modo de edição precisa do
+// expenses-service: sem ele (Lambda antes da tarefa 8.5), responde 501.
 func (a *api) telaGastoForm(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Has("id") {
+	c, _ := auth.FromContext(r.Context())
+	q := r.URL.Query()
+	if !q.Has("id") {
+		cats, err := a.deps.Categorias.Listar(r.Context(), c.UserID)
+		if err != nil {
+			a.erro(w, r, err)
+			return
+		}
+		escreverJSON(w, http.StatusOK, telaGastoForm{Categorias: cats})
+		return
+	}
+	if a.deps.Gastos == nil {
 		naoImplementado(w, r)
 		return
 	}
-	c, _ := auth.FromContext(r.Context())
-	cats, err := a.deps.Categorias.Listar(r.Context(), c.UserID)
+	id, err := idValido(q.Get("id"))
 	if err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	escreverJSON(w, http.StatusOK, telaGastoForm{Categorias: cats})
+	var cats catcontract.CategoriasPorGrupo
+	var g expcontract.Gasto
+	err = emParalelo(
+		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.UserID); return err },
+		func() (err error) { g, err = a.deps.Gastos.Obter(r.Context(), c.UserID, id); return err },
+	)
+	if err != nil {
+		a.erro(w, r, err)
+		return
+	}
+	out := resolver(g, porID(cats))
+	escreverJSON(w, http.StatusOK, telaGastoForm{Categorias: cats, Gasto: &out})
 }
 
-// telaGastoForm é o TelaGastoForm do openapi; Gasto entra na tarefa 8.3.
+// telaGastoForm é o TelaGastoForm do openapi.
 type telaGastoForm struct {
 	Categorias catcontract.CategoriasPorGrupo `json:"categorias"`
+	Gasto      *gastoOut                      `json:"gasto,omitempty"`
 }
 
 func idValido(id string) (string, error) {

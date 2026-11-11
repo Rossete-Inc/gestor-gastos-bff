@@ -1,5 +1,7 @@
 github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44 h1:UOGGq4/Ecr+Uy28x4BVJAZHFx2Ci1pSKf9GqpwsOyMg=
 github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44/go.mod h1:+oLNXGCBmxYZOMSIIC3YImKa3OfdrKLxJ1Tb+8TC1Aw=
+github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261111145451-9394135a8149 h1:D54agCU4AZpLjw/m3dfosV1FWoNe6VK72MyS9Da+dV8=
+github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261111145451-9394135a8149/go.mod h1:8tUdzay+lHJJuG2z117q+getwOpf92YBLNrF8J/A094=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1 h1:LV8IIkQ057DTMXIODw77NXRHuwdxOds+Vp2Ih62n1n4=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1/go.mod h1:x9KPx4MElC0yaUpzF//YmwaFPEjJAE9uxlMDYnffqqA=
 github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261109183359-8173383e54b4 h1:fX796+IIXA75QSS/mId6xH13uvFlHMGLUjOoyY1DaxA=

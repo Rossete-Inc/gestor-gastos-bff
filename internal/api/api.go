@@ -37,7 +37,11 @@ type Deps struct {
 	// Categorias é opcional: sem ele, as rotas de categorias e a tela do
 	// formulário de gasto respondem 501 (Lambda antes da tarefa 7.6).
 	Categorias CategoriasService
-	Log        *slog.Logger
+	// Gastos é opcional e só vale junto com Categorias: sem ele, as rotas de
+	// gastos respondem 501, a tela do formulário não abre gasto para edição e
+	// a exclusão de categoria não checa gastos (Lambda antes da tarefa 8.5).
+	Gastos GastosService
+	Log    *slog.Logger
 	// CORSOrigins lista as origens aceitas. Só o cmd/local usa; na AWS o CORS
 	// é feito pela HTTP API.
 	CORSOrigins []string
@@ -73,6 +77,10 @@ func New(d Deps) http.Handler {
 	if d.Categorias != nil {
 		a.rotasDeCategorias(mux)
 		futuras = slices.DeleteFunc(slices.Clone(futuras), func(r string) bool { return slices.Contains(rotasCategorias, r) })
+		if d.Gastos != nil {
+			a.rotasDeGastos(mux)
+			futuras = slices.DeleteFunc(futuras, func(r string) bool { return slices.Contains(rotasGastos, r) })
+		}
 	}
 	for _, rota := range futuras {
 		h := a.autenticado(http.HandlerFunc(naoImplementado))
