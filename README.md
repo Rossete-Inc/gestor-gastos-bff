@@ -111,7 +111,7 @@ Regras do BFF nas rotas de gastos:
 | `GET /me` | Implementada (5.4) |
 | `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. O 409 `categoria_em_uso` e o `?id=` do formulário entraram na 8.3 |
 | `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas (8.3), em `dev` desde a 8.5, junto com o `?id=` do formulário e a checagem de gastos na exclusão de categoria |
-| `GET /telas/dashboard` | Implementada (9.2). Em `dev` no merge |
+| `GET /telas/dashboard` | Implementada (9.2). O smoke test em `dev` confere o painel com o gasto de teste |
 | `/admin/*` | Respondem 401 sem token, 403 para quem não é admin e 501 para admin. Chegam na fatia 5 |
 
 ## Estrutura
