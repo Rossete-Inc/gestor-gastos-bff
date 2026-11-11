@@ -22,6 +22,9 @@
 #      expenses-service (com o segredo dos cursores) -> DynamoDB. O gasto de
 #      teste é excluído no fim, e um gasto que sobrar de uma execução que
 #      falhou some no próximo DELETE do mesmo dia.
+#   6. Painel (tarefa 9.2): GET /telas/dashboard do mês com o gasto de teste
+#      ainda lançado, o que exercita a operação ResumoMensal e os
+#      percentuais (cada visão não vazia soma 1000 décimos).
 #
 # O passo 2 depende do infra-base (PR #16): fluxo
 # ALLOW_ADMIN_USER_PASSWORD_AUTH no app client e permissões cognito-idp na
@@ -177,6 +180,19 @@ status=$(get "$API_URL/telas/gasto-form?id=$gasto" "$token")
 jq -e --arg id "$gasto" '.gasto.id == $id' "$tmp/corpo" > /dev/null \
   || erro "GET /telas/gasto-form não trouxe o gasto $gasto: $(head -c 500 "$tmp/corpo")"
 echo "GET /telas/gasto-form?id=: 200 (ok)"
+
+# 6. Painel (tarefa 9.2): o gasto de teste entra nos totais e nos últimos.
+status=$(get "$API_URL/telas/dashboard?mes=$mes" "$token")
+[ "$status" = "200" ] || erro "GET /telas/dashboard devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+jq -e --arg mes "$mes" --arg id "$gasto" '
+  .mes == $mes and .totalCentavos >= 1
+  and ([.totaisPorGrupo[].grupo] == ["CARTAO", "FIXO"])
+  and ([.totaisPorGrupo[].totalCentavos] | add) == .totalCentavos
+  and any(.ultimos[]; .id == $id)
+  and all(.pizza | to_entries[] | .value; length == 0 or ([.[].percentualDecimos] | add) == 1000)
+' "$tmp/corpo" > /dev/null \
+  || erro "GET /telas/dashboard devolveu um painel inesperado: $(head -c 800 "$tmp/corpo")"
+echo "GET /telas/dashboard?mes=$mes: 200, com o gasto de teste e percentuais somando 100% (ok)"
 
 status=$(enviar DELETE "$API_URL/gastos/$gasto" "$token")
 [ "$status" = "204" ] || erro "DELETE /gastos/$gasto devolveu $status, esperava 204: $(head -c 500 "$tmp/corpo")"

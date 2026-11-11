@@ -88,6 +88,7 @@ curl -s -H "$H" -H "$J" -X POST $B/gastos -d '{"valorCentavos":0,"data":"2026-11
 curl -s -H "$H" -H "$J" -X POST $B/gastos -d '{"valorCentavos":100,"data":"2026-11-03","categoriaId":"nao-existe"}'   # 422 categoriaId
 curl -s -H "$H" "$B/telas/gastos?mes=2026-11&grupo=CARTAO&limit=20"   # itens com nome e cor da categoria + nextCursor
 curl -s -H "$H" "$B/telas/gasto-form?id=<id>"                       # categorias + o gasto para edição
+curl -s -H "$H" "$B/telas/dashboard?mes=2026-11"                     # totais, pizza nas 4 visões e últimos 5
 curl -s -H "$H" -H "$J" -X PUT $B/gastos/<id> -d '{"valorCentavos":9990,"data":"2026-11-04","categoriaId":"internet"}'   # 200; data nova = id novo
 curl -s -H "$H" -X DELETE $B/categorias/internet                     # 403 (padrão); numa personalizada com gastos, 409 categoria_em_uso
 curl -s -o /dev/null -w '%{http_code}
@@ -99,7 +100,8 @@ Regras do BFF nas rotas de gastos:
 - **Categoria do gasto:** o BFF busca a categoria no categories-service (`ObterCategoria`). Inexistente ou de outro usuário vira 422 no campo `categoriaId`, e o expenses-service nem é chamado.
 - **Categoria em uso:** antes de excluir uma categoria, o BFF pergunta ao expenses-service (`ExisteGastoNaCategoria`) e responde 409 `categoria_em_uso`. A corrida entre a checagem e a exclusão é aceita no MVP.
 - **Categoria removida:** um gasto cuja categoria não está mais entre as visíveis aparece com a categoria "Removida" (cor `#9E9E9E`).
-- **Telas:** `/telas/gastos` e `/telas/gasto-form?id=` buscam gastos e categorias em paralelo.
+- **Telas:** `/telas/gastos`, `/telas/gasto-form?id=` e `/telas/dashboard` buscam gastos e categorias em paralelo.
+- **Painel:** o expenses-service (`ResumoMensal`) devolve as somas exatas em centavos; o BFF junta nome e cor das categorias e calcula `percentualDecimos` pelo método do maior resto ([`internal/painel`](internal/painel)), para que cada visão não vazia some 1000 (100,0%). As visões `CARTAO` e `FIXO` têm percentuais sobre o total do grupo. Na visão `todas`, uma categoria que aparecer nos dois grupos vira uma fatia só. A visão `grupos` só tem os grupos com gasto no mês. Fatias em ordem decrescente de valor.
 - **Query string:** `mes` fora de `AAAA-MM`, `grupo` fora de `CARTAO`/`FIXO`, `limit` fora de 1 a 100 ou `categoriaId` vazio respondem 400 `parametro_invalido`.
 
 ## Estado das rotas
@@ -109,7 +111,7 @@ Regras do BFF nas rotas de gastos:
 | `GET /me` | Implementada (5.4) |
 | `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. O 409 `categoria_em_uso` e o `?id=` do formulário entraram na 8.3 |
 | `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas (8.3), em `dev` desde a 8.5, junto com o `?id=` do formulário e a checagem de gastos na exclusão de categoria |
-| `/telas/dashboard` | Responde 501 `nao_implementado` depois da autenticação. Chega na fatia 4 |
+| `GET /telas/dashboard` | Implementada (9.2). Em `dev` no merge |
 | `/admin/*` | Respondem 401 sem token, 403 para quem não é admin e 501 para admin. Chegam na fatia 5 |
 
 ## Estrutura
@@ -187,6 +189,7 @@ Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COG
 3. `GET /me` com o token: 200 com o perfil do usuário de smoke test.
 4. `GET /categorias`: 200 com as 12 categorias padrão.
 5. Gastos: `GET /telas/gastos` do mês, `POST /gastos` de R$ 0,01 em Alimentação, `GET /telas/gasto-form?id=` e `DELETE /gastos/{id}` (depois, o formulário responde 404). O gasto de teste não fica na tabela.
+6. Painel: `GET /telas/dashboard` do mês, antes do `DELETE`, com o gasto de teste nos últimos e cada visão da pizza somando 100%.
 
 Os passos 2 e 3 dependem de duas mudanças no infra-base (PR #16). O `ci.yml` roda com `SMOKE_EXIGIR_TOKEN=1`, então a falta delas reprova o smoke test. Sem a variável, os passos são pulados com um aviso:
 
