@@ -108,7 +108,7 @@ Regras do BFF nas rotas de gastos:
 | --- | --- |
 | `GET /me` | Implementada (5.4) |
 | `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. O 409 `categoria_em_uso` e o `?id=` do formulário entraram na 8.3 |
-| `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas no `cmd/local` (8.3). Na Lambda respondem 501 até o expenses-service subir em `dev` (8.5); até lá, `?id=` no formulário também responde 501 e a exclusão de categoria não consulta gastos |
+| `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas (8.3), em `dev` desde a 8.5, junto com o `?id=` do formulário e a checagem de gastos na exclusão de categoria |
 | `/telas/dashboard` | Responde 501 `nao_implementado` depois da autenticação. Chega na fatia 4 |
 | `/admin/*` | Respondem 401 sem token, 403 para quem não é admin e 501 para admin. Chegam na fatia 5 |
 
@@ -127,7 +127,7 @@ Regras do BFF nas rotas de gastos:
 | `cmd/local` | Servidor HTTP local |
 | `cmd/lambda` | Lambda na AWS: o mesmo handler, com o users-service e o categories-service por Lambda Invoke |
 | `infra/` | App CDK (módulo Go à parte) da stack `gestor-gastos-dev-bff` |
-| `scripts/smoke.sh` | Smoke test de `GET /me` e `GET /categorias` em dev, rodado pela esteira depois do deploy |
+| `scripts/smoke.sh` | Smoke test de `/me`, `/categorias` e do ciclo de um gasto em dev, rodado pela esteira depois do deploy |
 
 Os testes da `internal/api` validam cada resposta contra o `openapi.yaml` com o kin-openapi. Se o código divergir do contrato, o teste falha.
 
@@ -146,7 +146,7 @@ A esteira roda o lint do contrato, o lint de Go e os testes em todo PR, e reprov
 
 ## Deploy na AWS (dev)
 
-A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-service.yml` do infra-base. No PR: qualidade, build arm64, testes do CDK e `cdk diff` comentado. No merge na `main`: deploy em `dev` e smoke test. **Ordem do primeiro deploy:** infra-base (auth e api) → users-service e categories-service → BFF.
+A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-service.yml` do infra-base. No PR: qualidade, build arm64, testes do CDK e `cdk diff` comentado. No merge na `main`: deploy em `dev` e smoke test. **Ordem do primeiro deploy:** infra-base (auth e api) → users-service, categories-service e expenses-service → BFF.
 
 ### Stack `gestor-gastos-dev-bff`
 
@@ -157,7 +157,7 @@ A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-s
 | Alarme `gestor-gastos-dev-bff-erros` | Qualquer erro da função no alias em 1 minuto; reverte o canary |
 | Logs `/aws/lambda/gestor-gastos-dev-bff` | 7 dias |
 | Rotas na HTTP API do infra-base | Uma rota por operação do `openapi.yaml` (13), todas com o authorizer JWT do infra-base e a integração `AWS_PROXY` (payload 2.0) com o alias `live`. A API, o stage, o CORS e a rota `GET /infra/auth-check` continuam no infra-base |
-| Permissões | A HTTP API invoca só o alias `live`; a Lambda invoca só os alias `live` do users-service e do categories-service |
+| Permissões | A HTTP API invoca só o alias `live`; a Lambda invoca só os alias `live` do users-service, do categories-service e do expenses-service |
 
 Parâmetros do SSM:
 
@@ -167,6 +167,7 @@ Parâmetros do SSM:
 | `/gestor-gastos/dev/api/id`, `api/authorizer-id` | lido (infra-base) | Rotas e integração |
 | `/gestor-gastos/dev/users/function-arn` | lido (users-service) | `USERS_FUNCTION_ARN` e `lambda:InvokeFunction` |
 | `/gestor-gastos/dev/categories/function-arn` | lido (categories-service) | `CATEGORIES_FUNCTION_ARN` e `lambda:InvokeFunction` |
+| `/gestor-gastos/dev/expenses/function-arn` | lido (expenses-service) | `EXPENSES_FUNCTION_ARN` e `lambda:InvokeFunction` |
 | `/gestor-gastos/dev/bff/function-arn` | publicado | ARN do alias `live` do BFF |
 
 Na esteira, o app lê esses parâmetros no synth (`ssm:GetParameters`, com as credenciais do job) e grava os valores no template. Isso é obrigatório: a role de deploy do bootstrap do CDK só lê o parâmetro de versão do bootstrap, então um parâmetro do CloudFormation do tipo `AWS::SSM::Parameter::Value<String>` falharia no `CreateChangeSet` com AccessDenied. É o mesmo tratamento do users-service. O modo vem do contexto `verificarSsm`, que o `ci.yml` passa; sem ele, a variável `AMBIENTE` do `go-service.yml` liga o modo `erro`:
@@ -175,7 +176,7 @@ Na esteira, o app lê esses parâmetros no synth (`ssm:GetParameters`, com as cr
 - `aviso` (`cdk diff` no PR): a falta vira aviso, e a stack volta aos parâmetros do CloudFormation.
 - Sem contexto e sem `AMBIENTE` (testes e synth local): nada é consultado, e cada valor vira um parâmetro do CloudFormation (`valueForStringParameter`), resolvido só no deploy.
 
-Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL`, `USERS_FUNCTION_ARN` e `CATEGORIES_FUNCTION_ARN`. O CORS é feito pela HTTP API.
+Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL`, `USERS_FUNCTION_ARN`, `CATEGORIES_FUNCTION_ARN` e `EXPENSES_FUNCTION_ARN`. O CORS é feito pela HTTP API.
 
 ### Smoke test
 
@@ -184,6 +185,8 @@ Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COG
 1. `GET /me` sem token: 401 do authorizer.
 2. Garante o usuário `smoke-test@example.com` no User Pool (criado sem e-mail de convite), troca a senha por uma aleatória a cada execução e pede um access token com `ADMIN_USER_PASSWORD_AUTH`. Nenhuma senha fica guardada.
 3. `GET /me` com o token: 200 com o perfil do usuário de smoke test.
+4. `GET /categorias`: 200 com as 12 categorias padrão.
+5. Gastos: `GET /telas/gastos` do mês, `POST /gastos` de R$ 0,01 em Alimentação, `GET /telas/gasto-form?id=` e `DELETE /gastos/{id}` (depois, o formulário responde 404). O gasto de teste não fica na tabela.
 
 Os passos 2 e 3 dependem de duas mudanças no infra-base (PR #16). O `ci.yml` roda com `SMOKE_EXIGIR_TOKEN=1`, então a falta delas reprova o smoke test. Sem a variável, os passos são pulados com um aviso:
 

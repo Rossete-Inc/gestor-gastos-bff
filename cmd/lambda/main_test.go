@@ -14,6 +14,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/authtest"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/lambdahttp"
 	catcontract "github.com/Rossete-Inc/gestor-gastos-categories-service/contract"
+	expcontract "github.com/Rossete-Inc/gestor-gastos-expenses-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/aws/aws-lambda-go/events"
@@ -24,6 +25,7 @@ import (
 const (
 	usersArn      = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-users:live"
 	categoriesArn = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-categories:live"
+	expensesArn   = "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-expenses:live"
 )
 
 func env(m map[string]string) func(string) (string, bool) {
@@ -38,6 +40,7 @@ func valido() map[string]string {
 		VarCognitoClientID:    "client",
 		VarUsersFunction:      usersArn,
 		VarCategoriesFunction: categoriesArn,
+		VarExpensesFunction:   expensesArn,
 	}
 }
 
@@ -46,7 +49,7 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Base.Env != "dev" || c.Base.Region != "us-east-1" || c.UsersFunction != usersArn || c.CategoriesFunction != categoriesArn || c.CognitoJWKSURL != "" {
+	if c.Base.Env != "dev" || c.Base.Region != "us-east-1" || c.UsersFunction != usersArn || c.CategoriesFunction != categoriesArn || c.ExpensesFunction != expensesArn || c.CognitoJWKSURL != "" {
 		t.Errorf("config = %+v", c)
 	}
 }
@@ -62,6 +65,7 @@ func TestLoadConfigRecusa(t *testing.T) {
 		"sem client":     {func(m map[string]string) { delete(m, VarCognitoClientID) }, VarCognitoClientID},
 		"sem users":      {func(m map[string]string) { delete(m, VarUsersFunction) }, VarUsersFunction},
 		"sem categories": {func(m map[string]string) { delete(m, VarCategoriesFunction) }, VarCategoriesFunction},
+		"sem expenses":   {func(m map[string]string) { delete(m, VarExpensesFunction) }, VarExpensesFunction},
 	}
 	for nome, c := range casos {
 		t.Run(nome, func(t *testing.T) {
@@ -99,6 +103,13 @@ func (f *fakeAWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b, _ := io.ReadAll(r.Body)
 	if err := json.Unmarshal(b, &req); err != nil {
 		http.Error(w, "envelope inesperado: "+string(b), http.StatusBadRequest)
+		return
+	}
+	if req.Operation == expcontract.OpListarGastos {
+		pagina, _ := json.Marshal(expcontract.PaginaGastos{Items: []expcontract.Gasto{
+			{ID: "g-1", ValorCentavos: 4590, Data: "2026-11-03", Grupo: "CARTAO", CategoriaID: "alimentacao"},
+		}})
+		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: pagina})
 		return
 	}
 	if req.Operation == catcontract.OpListarCategorias {
@@ -204,6 +215,47 @@ func TestCategoriasInvocaOCategoriesServicePorLambda(t *testing.T) {
 	}
 }
 
+func TestGastosInvocaOExpensesServicePorLambda(t *testing.T) {
+	emissor := authtest.New(t)
+	m := valido()
+	m[VarCognitoIssuer] = emissor.Issuer
+	m[VarCognitoClientID] = authtest.ClientID
+	c, err := LoadConfig(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeAWS{}
+	h, err := NewHandler(c, awsFake(t, fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := chamarComQuery(t, lambdahttp.Handler(h), "/telas/gastos", "mes=2026-11", emissor.Token(t, "user-1", authtest.Opcoes{}))
+	if out.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, corpo = %s", out.StatusCode, out.Body)
+	}
+	if !strings.Contains(out.Body, `"categoria":{"id":"alimentacao","nome":"Alimentação","cor":"#F97316"}`) {
+		t.Errorf("corpo = %s", out.Body)
+	}
+	invocadas := strings.Join(fake.funcoes, ",")
+	if len(fake.funcoes) != 2 || !strings.Contains(invocadas, expensesArn) || !strings.Contains(invocadas, categoriesArn) {
+		t.Errorf("funções invocadas = %v", fake.funcoes)
+	}
+}
+
+// chamarComQuery é o chamar com query string (GET).
+func chamarComQuery(t *testing.T, f lambdahttp.Func, caminho, query, token string) events.APIGatewayV2HTTPResponse {
+	t.Helper()
+	ev := events.APIGatewayV2HTTPRequest{Version: "2.0", RawPath: caminho, RawQueryString: query,
+		Headers: map[string]string{"authorization": "Bearer " + token}}
+	ev.RequestContext.HTTP.Method = http.MethodGet
+	out, err := f(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestRun(t *testing.T) {
 	// Sem arquivos de configuração da máquina: o teste não depende de ~/.aws.
 	t.Setenv("AWS_CONFIG_FILE", t.TempDir()+"/nao-existe")
@@ -233,11 +285,14 @@ func TestNewHandlerRecusa(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	semIssuer, semUsers, semCategories := c, c, c
+	semIssuer, semUsers, semCategories, semExpenses := c, c, c, c
 	semIssuer.CognitoIssuer = ""
 	semUsers.UsersFunction = ""
 	semCategories.CategoriesFunction = ""
-	for nome, cfg := range map[string]Config{"sem issuer": semIssuer, "sem users": semUsers, "sem categories": semCategories} {
+	semExpenses.ExpensesFunction = ""
+	for nome, cfg := range map[string]Config{
+		"sem issuer": semIssuer, "sem users": semUsers, "sem categories": semCategories, "sem expenses": semExpenses,
+	} {
 		t.Run(nome, func(t *testing.T) {
 			if h, err := NewHandler(cfg, aws.Config{Region: "us-east-1"}); err == nil || h != nil {
 				t.Errorf("NewHandler = %v, %v", h, err)
