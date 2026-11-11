@@ -45,6 +45,7 @@ const (
 	// Lidos dos serviços: ARN do alias live da Lambda de cada um.
 	ParamUsersFunctionArn      = "users/function-arn"
 	ParamCategoriesFunctionArn = "categories/function-arn"
+	ParamExpensesFunctionArn   = "expenses/function-arn"
 
 	// Publicado por este repositório: ARN do alias live do BFF.
 	ParamBffFunctionArn = "bff/function-arn"
@@ -68,6 +69,7 @@ var Prerequisitos = []Prerequisito{
 	{ParamAuthorizerID, "gestor-gastos-infra-base (stack api)"},
 	{ParamUsersFunctionArn, "gestor-gastos-users-service"},
 	{ParamCategoriesFunctionArn, "gestor-gastos-categories-service"},
+	{ParamExpensesFunctionArn, "gestor-gastos-expenses-service"},
 }
 
 // PrefixoSSM devolve o caminho base dos parâmetros de um ambiente, sem barra

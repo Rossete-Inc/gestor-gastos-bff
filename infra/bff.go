@@ -53,6 +53,7 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 	apiID := ler(ParamAPIID)
 	usersArn := ler(ParamUsersFunctionArn)
 	categoriesArn := ler(ParamCategoriesFunctionArn)
+	expensesArn := ler(ParamExpensesFunctionArn)
 
 	nome := NomeStack(env, "bff")
 	logs := awslogs.NewLogGroup(stack, jsii.String("Logs"), &awslogs.LogGroupProps{
@@ -81,6 +82,7 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 			"COGNITO_JWKS_URL":        ler(ParamJwksURL),
 			"USERS_FUNCTION_ARN":      usersArn,
 			"CATEGORIES_FUNCTION_ARN": categoriesArn,
+			"EXPENSES_FUNCTION_ARN":   expensesArn,
 		},
 	})
 
@@ -94,6 +96,11 @@ func NovaStackBff(scope constructs.Construct, id string, props *BffProps) awscdk
 		Sid:       jsii.String("InvocarCategoriesService"),
 		Actions:   jsii.Strings("lambda:InvokeFunction"),
 		Resources: &[]*string{categoriesArn},
+	}))
+	fn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Sid:       jsii.String("InvocarExpensesService"),
+		Actions:   jsii.Strings("lambda:InvokeFunction"),
+		Resources: &[]*string{expensesArn},
 	}))
 
 	alias := awslambda.NewAlias(stack, jsii.String("Live"), &awslambda.AliasProps{

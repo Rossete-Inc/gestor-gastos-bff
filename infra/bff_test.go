@@ -44,6 +44,9 @@ func valorFalso(nome string) string {
 	if strings.HasSuffix(nome, ParamCategoriesFunctionArn) {
 		return "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-categories:live"
 	}
+	if strings.HasSuffix(nome, ParamExpensesFunctionArn) {
+		return "arn:aws:lambda:us-east-1:123456789012:function:gestor-gastos-dev-expenses:live"
+	}
 	return "valor:" + nome
 }
 
@@ -139,6 +142,7 @@ func TestLambdaArm64Com256MB(t *testing.T) {
 			"COGNITO_JWKS_URL":        ref(paramSSM(t, tpl, ParamJwksURL)),
 			"USERS_FUNCTION_ARN":      ref(paramSSM(t, tpl, ParamUsersFunctionArn)),
 			"CATEGORIES_FUNCTION_ARN": ref(paramSSM(t, tpl, ParamCategoriesFunctionArn)),
+			"EXPENSES_FUNCTION_ARN":   ref(paramSSM(t, tpl, ParamExpensesFunctionArn)),
 		}},
 	})
 	// Sem VPC: custo zero parado e sem NAT.
@@ -267,6 +271,7 @@ func TestInvocaSoOsAliasDosServicos(t *testing.T) {
 	tpl := templateTeste(t)
 	usersID := paramSSM(t, tpl, ParamUsersFunctionArn)
 	categoriesID := paramSSM(t, tpl, ParamCategoriesFunctionArn)
+	expensesID := paramSSM(t, tpl, ParamExpensesFunctionArn)
 	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
 		"PolicyDocument": map[string]interface{}{
 			"Statement": []interface{}{
@@ -281,6 +286,12 @@ func TestInvocaSoOsAliasDosServicos(t *testing.T) {
 					"Action":   "lambda:InvokeFunction",
 					"Effect":   "Allow",
 					"Resource": ref(categoriesID),
+				},
+				map[string]interface{}{
+					"Sid":      "InvocarExpensesService",
+					"Action":   "lambda:InvokeFunction",
+					"Effect":   "Allow",
+					"Resource": ref(expensesID),
 				},
 			},
 		},
@@ -371,6 +382,7 @@ func TestNaEsteiraGravaOsValoresNoTemplate(t *testing.T) {
 			"COGNITO_JWKS_URL":        v(ParamJwksURL),
 			"USERS_FUNCTION_ARN":      v(ParamUsersFunctionArn),
 			"CATEGORIES_FUNCTION_ARN": v(ParamCategoriesFunctionArn),
+			"EXPENSES_FUNCTION_ARN":   v(ParamExpensesFunctionArn),
 		}},
 	})
 	tpl.HasResourceProperties(jsii.String("AWS::ApiGatewayV2::Route"), map[string]interface{}{
@@ -389,6 +401,10 @@ func TestNaEsteiraGravaOsValoresNoTemplate(t *testing.T) {
 				map[string]interface{}{
 					"Sid": "InvocarCategoriesService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
 					"Resource": v(ParamCategoriesFunctionArn),
+				},
+				map[string]interface{}{
+					"Sid": "InvocarExpensesService", "Action": "lambda:InvokeFunction", "Effect": "Allow",
+					"Resource": v(ParamExpensesFunctionArn),
 				},
 			},
 		},

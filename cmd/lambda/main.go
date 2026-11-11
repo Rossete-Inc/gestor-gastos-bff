@@ -1,6 +1,6 @@
 // Command lambda é o BFF na AWS: a Lambda atrás da HTTP API (payload 2.0).
-// Usa o mesmo handler do cmd/local (internal/api) e chama o users-service e o
-// categories-service por Lambda Invoke (ADR 0004).
+// Usa o mesmo handler do cmd/local (internal/api) e chama o users-service, o
+// categories-service e o expenses-service por Lambda Invoke (ADR 0004).
 //
 // O binário segue a convenção do go-service.yml: dist/lambda/bootstrap
 // (linux/arm64, provided.al2023). As variáveis de ambiente são definidas
@@ -17,6 +17,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/api"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/categorias"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/cognito"
+	"github.com/Rossete-Inc/gestor-gastos-bff/internal/gastos"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/lambdahttp"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/me"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/usuarios"
@@ -40,6 +41,7 @@ const (
 	VarCognitoJWKSURL     = "COGNITO_JWKS_URL"
 	VarUsersFunction      = "USERS_FUNCTION_ARN"
 	VarCategoriesFunction = "CATEGORIES_FUNCTION_ARN"
+	VarExpensesFunction   = "EXPENSES_FUNCTION_ARN"
 )
 
 // Config é a configuração da Lambda.
@@ -52,6 +54,8 @@ type Config struct {
 	UsersFunction string
 	// CategoriesFunction é o ARN do alias live do categories-service.
 	CategoriesFunction string
+	// ExpensesFunction é o ARN do alias live do expenses-service.
+	ExpensesFunction string
 }
 
 // LoadConfig lê o ambiente. Só aceita RUNTIME=aws.
@@ -71,6 +75,7 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 		CognitoJWKSURL:     r.Get(VarCognitoJWKSURL, ""),
 		UsersFunction:      r.Require(VarUsersFunction),
 		CategoriesFunction: r.Require(VarCategoriesFunction),
+		ExpensesFunction:   r.Require(VarExpensesFunction),
 	}
 	if err := r.Err(); err != nil {
 		return Config{}, err
@@ -95,12 +100,17 @@ func NewHandler(c Config, awsCfg aws.Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	transporteGastos, err := invoke.NewTransport(c.Base.Runtime, c.ExpensesFunction, lambdaAPI, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// CORS é feito pela HTTP API (infra-base), por isso sem CORSOrigins aqui.
 	return api.New(api.Deps{
 		Tokens:     tokens,
 		Me:         me.New(usuarios.New(transporte), cognito.New(cip.NewFromConfig(awsCfg))),
 		Categorias: categorias.New(transporteCategorias),
+		Gastos:     gastos.New(transporteGastos),
 		Log:        log,
 	}), nil
 }
