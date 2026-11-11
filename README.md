@@ -76,14 +76,15 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -X DELETE $B/categorias/<id>   
 curl -s -H "$H" $B/telas/gasto-form                              # {"categorias":{...}}
 ```
 
-Na AWS, as rotas de categorias respondem 501 até o deploy do categories-service (tarefa 7.6). Também ficam para depois: a edição de gasto em `/telas/gasto-form?id=` e o bloqueio de exclusão de categoria com gastos (409 `categoria_em_uso`), ambos na tarefa 8.3.
+Ficam para depois: a edição de gasto em `/telas/gasto-form?id=` e o bloqueio de exclusão de categoria com gastos (409 `categoria_em_uso`), ambos na tarefa 8.3.
 
 ## Estado das rotas
 
 | Rota | Estado |
 | --- | --- |
 | `GET /me` | Implementada (5.4) |
-| Telas, gastos e categorias | Respondem 501 `nao_implementado` depois da autenticação. Chegam nas fatias 2 a 4 |
+| `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. `?id=` no formulário e o 409 `categoria_em_uso` chegam na 8.3 |
+| Gastos, `/telas/gastos` e `/telas/dashboard` | Respondem 501 `nao_implementado` depois da autenticação. Chegam nas fatias 3 e 4 |
 | `/admin/*` | Respondem 401 sem token, 403 para quem não é admin e 501 para admin. Chegam na fatia 5 |
 
 ## Estrutura
@@ -98,9 +99,9 @@ Na AWS, as rotas de categorias respondem 501 até o deploy do categories-service
 | `internal/lambdahttp` | Converte o evento da HTTP API (payload 2.0) em `http.Request` e a resposta de volta |
 | `internal/authtest` | Emite tokens de teste assinados por um JWKS local |
 | `cmd/local` | Servidor HTTP local |
-| `cmd/lambda` | Lambda na AWS: o mesmo handler, com o users-service por Lambda Invoke |
+| `cmd/lambda` | Lambda na AWS: o mesmo handler, com o users-service e o categories-service por Lambda Invoke |
 | `infra/` | App CDK (módulo Go à parte) da stack `gestor-gastos-dev-bff` |
-| `scripts/smoke.sh` | Smoke test de `GET /me` em dev, rodado pela esteira depois do deploy |
+| `scripts/smoke.sh` | Smoke test de `GET /me` e `GET /categorias` em dev, rodado pela esteira depois do deploy |
 
 Os testes da `internal/api` validam cada resposta contra o `openapi.yaml` com o kin-openapi. Se o código divergir do contrato, o teste falha.
 
@@ -119,7 +120,7 @@ A esteira roda o lint do contrato, o lint de Go e os testes em todo PR, e reprov
 
 ## Deploy na AWS (dev)
 
-A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-service.yml` do infra-base. No PR: qualidade, build arm64, testes do CDK e `cdk diff` comentado. No merge na `main`: deploy em `dev` e smoke test. **Ordem do primeiro deploy:** infra-base (auth e api) → users-service → BFF.
+A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-service.yml` do infra-base. No PR: qualidade, build arm64, testes do CDK e `cdk diff` comentado. No merge na `main`: deploy em `dev` e smoke test. **Ordem do primeiro deploy:** infra-base (auth e api) → users-service e categories-service → BFF.
 
 ### Stack `gestor-gastos-dev-bff`
 
@@ -130,7 +131,7 @@ A esteira ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) chama o `go-s
 | Alarme `gestor-gastos-dev-bff-erros` | Qualquer erro da função no alias em 1 minuto; reverte o canary |
 | Logs `/aws/lambda/gestor-gastos-dev-bff` | 7 dias |
 | Rotas na HTTP API do infra-base | Uma rota por operação do `openapi.yaml` (13), todas com o authorizer JWT do infra-base e a integração `AWS_PROXY` (payload 2.0) com o alias `live`. A API, o stage, o CORS e a rota `GET /infra/auth-check` continuam no infra-base |
-| Permissões | A HTTP API invoca só o alias `live`; a Lambda invoca só o alias do users-service |
+| Permissões | A HTTP API invoca só o alias `live`; a Lambda invoca só os alias `live` do users-service e do categories-service |
 
 Parâmetros do SSM:
 
@@ -139,6 +140,7 @@ Parâmetros do SSM:
 | `/gestor-gastos/dev/auth/issuer-url`, `auth/user-pool-client-id`, `auth/jwks-url` | lido (infra-base) | `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL` |
 | `/gestor-gastos/dev/api/id`, `api/authorizer-id` | lido (infra-base) | Rotas e integração |
 | `/gestor-gastos/dev/users/function-arn` | lido (users-service) | `USERS_FUNCTION_ARN` e `lambda:InvokeFunction` |
+| `/gestor-gastos/dev/categories/function-arn` | lido (categories-service) | `CATEGORIES_FUNCTION_ARN` e `lambda:InvokeFunction` |
 | `/gestor-gastos/dev/bff/function-arn` | publicado | ARN do alias `live` do BFF |
 
 Na esteira, o app lê esses parâmetros no synth (`ssm:GetParameters`, com as credenciais do job) e grava os valores no template. Isso é obrigatório: a role de deploy do bootstrap do CDK só lê o parâmetro de versão do bootstrap, então um parâmetro do CloudFormation do tipo `AWS::SSM::Parameter::Value<String>` falharia no `CreateChangeSet` com AccessDenied. É o mesmo tratamento do users-service. O modo vem do contexto `verificarSsm`, que o `ci.yml` passa; sem ele, a variável `AMBIENTE` do `go-service.yml` liga o modo `erro`:
@@ -147,7 +149,7 @@ Na esteira, o app lê esses parâmetros no synth (`ssm:GetParameters`, com as cr
 - `aviso` (`cdk diff` no PR): a falta vira aviso, e a stack volta aos parâmetros do CloudFormation.
 - Sem contexto e sem `AMBIENTE` (testes e synth local): nada é consultado, e cada valor vira um parâmetro do CloudFormation (`valueForStringParameter`), resolvido só no deploy.
 
-Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL` e `USERS_FUNCTION_ARN`. O CORS é feito pela HTTP API.
+Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COGNITO_ISSUER`, `COGNITO_CLIENT_ID`, `COGNITO_JWKS_URL`, `USERS_FUNCTION_ARN` e `CATEGORIES_FUNCTION_ARN`. O CORS é feito pela HTTP API.
 
 ### Smoke test
 

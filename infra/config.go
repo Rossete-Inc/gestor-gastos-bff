@@ -42,8 +42,9 @@ const (
 	ParamAPIID            = "api/id"
 	ParamAuthorizerID     = "api/authorizer-id"
 
-	// Lido do users-service: ARN do alias live da Lambda dele.
-	ParamUsersFunctionArn = "users/function-arn"
+	// Lidos dos serviços: ARN do alias live da Lambda de cada um.
+	ParamUsersFunctionArn      = "users/function-arn"
+	ParamCategoriesFunctionArn = "categories/function-arn"
 
 	// Publicado por este repositório: ARN do alias live do BFF.
 	ParamBffFunctionArn = "bff/function-arn"
@@ -58,7 +59,7 @@ type Prerequisito struct {
 }
 
 // Prerequisitos são todos os parâmetros que a stack lê. A ordem do primeiro
-// deploy é infra-base -> users-service -> BFF (design.md, Migration Plan).
+// deploy é infra-base -> serviços -> BFF (design.md, Migration Plan).
 var Prerequisitos = []Prerequisito{
 	{ParamIssuerURL, "gestor-gastos-infra-base (stack auth)"},
 	{ParamUserPoolClientID, "gestor-gastos-infra-base (stack auth)"},
@@ -66,6 +67,7 @@ var Prerequisitos = []Prerequisito{
 	{ParamAPIID, "gestor-gastos-infra-base (stack api)"},
 	{ParamAuthorizerID, "gestor-gastos-infra-base (stack api)"},
 	{ParamUsersFunctionArn, "gestor-gastos-users-service"},
+	{ParamCategoriesFunctionArn, "gestor-gastos-categories-service"},
 }
 
 // PrefixoSSM devolve o caminho base dos parâmetros de um ambiente, sem barra

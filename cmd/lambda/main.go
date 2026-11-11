@@ -1,6 +1,6 @@
 // Command lambda é o BFF na AWS: a Lambda atrás da HTTP API (payload 2.0).
-// Usa o mesmo handler do cmd/local (internal/api) e chama o users-service
-// por Lambda Invoke (ADR 0004).
+// Usa o mesmo handler do cmd/local (internal/api) e chama o users-service e o
+// categories-service por Lambda Invoke (ADR 0004).
 //
 // O binário segue a convenção do go-service.yml: dist/lambda/bootstrap
 // (linux/arm64, provided.al2023). As variáveis de ambiente são definidas
@@ -15,6 +15,7 @@ import (
 	"os"
 
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/api"
+	"github.com/Rossete-Inc/gestor-gastos-bff/internal/categorias"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/cognito"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/lambdahttp"
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/me"
@@ -34,10 +35,11 @@ const servico = "bff"
 
 // Variáveis de ambiente definidas pelo CDK (infra/bff.go).
 const (
-	VarCognitoIssuer   = "COGNITO_ISSUER"
-	VarCognitoClientID = "COGNITO_CLIENT_ID"
-	VarCognitoJWKSURL  = "COGNITO_JWKS_URL"
-	VarUsersFunction   = "USERS_FUNCTION_ARN"
+	VarCognitoIssuer      = "COGNITO_ISSUER"
+	VarCognitoClientID    = "COGNITO_CLIENT_ID"
+	VarCognitoJWKSURL     = "COGNITO_JWKS_URL"
+	VarUsersFunction      = "USERS_FUNCTION_ARN"
+	VarCategoriesFunction = "CATEGORIES_FUNCTION_ARN"
 )
 
 // Config é a configuração da Lambda.
@@ -48,6 +50,8 @@ type Config struct {
 	CognitoJWKSURL  string
 	// UsersFunction é o ARN do alias live do users-service.
 	UsersFunction string
+	// CategoriesFunction é o ARN do alias live do categories-service.
+	CategoriesFunction string
 }
 
 // LoadConfig lê o ambiente. Só aceita RUNTIME=aws.
@@ -61,11 +65,12 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 	}
 	r := config.NewReader(lookup)
 	c := Config{
-		Base:            base,
-		CognitoIssuer:   r.Require(VarCognitoIssuer),
-		CognitoClientID: r.Require(VarCognitoClientID),
-		CognitoJWKSURL:  r.Get(VarCognitoJWKSURL, ""),
-		UsersFunction:   r.Require(VarUsersFunction),
+		Base:               base,
+		CognitoIssuer:      r.Require(VarCognitoIssuer),
+		CognitoClientID:    r.Require(VarCognitoClientID),
+		CognitoJWKSURL:     r.Get(VarCognitoJWKSURL, ""),
+		UsersFunction:      r.Require(VarUsersFunction),
+		CategoriesFunction: r.Require(VarCategoriesFunction),
 	}
 	if err := r.Err(); err != nil {
 		return Config{}, err
@@ -81,18 +86,22 @@ func NewHandler(c Config, awsCfg aws.Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	transporte, err := invoke.NewTransport(c.Base.Runtime, c.UsersFunction, awslambda.NewFromConfig(awsCfg), nil)
+	lambdaAPI := awslambda.NewFromConfig(awsCfg)
+	transporte, err := invoke.NewTransport(c.Base.Runtime, c.UsersFunction, lambdaAPI, nil)
+	if err != nil {
+		return nil, err
+	}
+	transporteCategorias, err := invoke.NewTransport(c.Base.Runtime, c.CategoriesFunction, lambdaAPI, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// CORS é feito pela HTTP API (infra-base), por isso sem CORSOrigins aqui.
-	// Sem Categorias até a tarefa 7.6 (deploy do categories-service): as rotas
-	// de categorias respondem 501 em dev.
 	return api.New(api.Deps{
-		Tokens: tokens,
-		Me:     me.New(usuarios.New(transporte), cognito.New(cip.NewFromConfig(awsCfg))),
-		Log:    log,
+		Tokens:     tokens,
+		Me:         me.New(usuarios.New(transporte), cognito.New(cip.NewFromConfig(awsCfg))),
+		Categorias: categorias.New(transporteCategorias),
+		Log:        log,
 	}), nil
 }
 

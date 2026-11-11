@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test do BFF em dev: GET /me pela HTTP API pública, com um token real
+# Smoke test do BFF em dev: GET /me e GET /categorias pela HTTP API pública, com um token real
 # do Cognito.
 #
 # Roda no job de deploy do go-service.yml (input smoke-test), logo depois do
@@ -15,6 +15,8 @@
 #   3. GET /me com o token: 200 com o perfil do usuário de smoke test (criado
 #      sob demanda no primeiro acesso, design.md), o que exercita BFF ->
 #      Lambda Invoke -> users-service -> DynamoDB.
+#   4. GET /categorias com o token: 200 com as 12 categorias padrão, o que
+#      exercita o categories-service e o seed feito no deploy dele.
 #
 # O passo 2 depende do infra-base (PR #16): fluxo
 # ALLOW_ADMIN_USER_PASSWORD_AUTH no app client e permissões cognito-idp na
@@ -130,3 +132,11 @@ status=$(get "$API_URL/me" "$token")
 jq -e --arg email "$EMAIL" '.email == $email and (.id | length > 0) and .papel == "cliente"' "$tmp/corpo" > /dev/null \
   || erro "GET /me devolveu um perfil inesperado: $(head -c 500 "$tmp/corpo")"
 echo "GET /me com token real: 200, perfil de $EMAIL (ok)"
+
+# 4. Categorias (tarefa 7.5): 200 com as 12 padrão, 6 em cada grupo. Exercita
+#    BFF -> Lambda Invoke -> categories-service -> DynamoDB e o seed do deploy.
+status=$(get "$API_URL/categorias" "$token")
+[ "$status" = "200" ] || erro "GET /categorias com token devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+jq -e '([.CARTAO[] | select(.padrao)] | length) == 6 and ([.FIXO[] | select(.padrao)] | length) == 6' "$tmp/corpo" > /dev/null \
+  || erro "GET /categorias não trouxe as 12 categorias padrão (6 + 6). O seed do categories-service rodou? $(head -c 500 "$tmp/corpo")"
+echo "GET /categorias com token real: 200, 12 categorias padrão (ok)"
