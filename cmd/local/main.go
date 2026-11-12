@@ -129,11 +129,13 @@ func NewHandler(c Config) (http.Handler, error) {
 		Credentials:  aws.AnonymousCredentials{},
 	})
 
+	users := usuarios.New(transporte)
 	return api.New(api.Deps{
 		Tokens:      tokens,
-		Me:          me.New(usuarios.New(transporte), cognito.New(cognitoAPI)),
+		Me:          me.New(users, cognito.New(cognitoAPI)),
 		Categorias:  categorias.New(transporteCategorias),
 		Gastos:      gastos.New(transporteGastos),
+		Admin:       users,
 		Log:         log,
 		CORSOrigins: c.CORSOrigins,
 	}), nil

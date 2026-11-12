@@ -6,12 +6,12 @@ require (
 	github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44
 	github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261111195343-942b7c7b0e99
 	github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1
-	github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261109183359-8173383e54b4
+	github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.18
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
-	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.75.10
+	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.76.0
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.114.3
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/golang-jwt/jwt/v5 v5.3.1

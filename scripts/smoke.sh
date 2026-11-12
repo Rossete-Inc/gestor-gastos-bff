@@ -25,6 +25,8 @@
 #   6. Painel (tarefa 9.2): GET /telas/dashboard do mês com o gasto de teste
 #      ainda lançado, o que exercita a operação ResumoMensal e os
 #      percentuais (cada visão não vazia soma 1000 décimos).
+#   7. Admin (tarefa 10.2): GET /admin/telas/usuarios com o token de cliente
+#      responde 403 somente_admin (rota publicada e restrita ao grupo admin).
 #
 # O passo 2 depende do infra-base (PR #16): fluxo
 # ALLOW_ADMIN_USER_PASSWORD_AUTH no app client e permissões cognito-idp na
@@ -199,3 +201,12 @@ status=$(enviar DELETE "$API_URL/gastos/$gasto" "$token")
 status=$(get "$API_URL/telas/gasto-form?id=$gasto" "$token")
 [ "$status" = "404" ] || erro "o gasto $gasto ainda existe depois do DELETE (status $status)"
 echo "DELETE /gastos/{id}: 204, e o gasto não existe mais (ok)"
+
+# 7. Admin (tarefa 10.2): o usuário de smoke test não está no grupo admin, então
+# a lista de usuários responde 403 somente_admin, do BFF, sem chegar ao
+# users-service.
+status=$(get "$API_URL/admin/telas/usuarios" "$token")
+[ "$status" = "403" ] || erro "GET /admin/telas/usuarios com token de cliente devolveu $status, esperava 403: $(head -c 500 "$tmp/corpo")"
+jq -e '.code == "somente_admin"' "$tmp/corpo" > /dev/null \
+  || erro "GET /admin/telas/usuarios devolveu um 403 inesperado: $(head -c 500 "$tmp/corpo")"
+echo "GET /admin/telas/usuarios com token de cliente: 403 somente_admin (ok)"
