@@ -93,10 +93,10 @@ func TestTelaAdminUsuariosQueryInvalida(t *testing.T) {
 	f := &fakeAdmin{}
 	h, admin, _ := montarAdmin(t, f)
 	casos := map[string]string{
-		"?limit=0":                            "parametro_invalido",
-		"?limit=101":                          "parametro_invalido",
-		"?limit=dez":                          "parametro_invalido",
-		"?cursor=":                            contract.CodigoCursorInvalido,
+		"?limit=0":                             "parametro_invalido",
+		"?limit=101":                           "parametro_invalido",
+		"?limit=dez":                           "parametro_invalido",
+		"?cursor=":                             contract.CodigoCursorInvalido,
 		"?cursor=" + strings.Repeat("a", 2049): contract.CodigoCursorInvalido,
 	}
 	for q, code := range casos {
