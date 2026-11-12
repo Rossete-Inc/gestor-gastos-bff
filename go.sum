@@ -4,8 +4,8 @@ github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261111195343-942b
 github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261111195343-942b7c7b0e99/go.mod h1:O7EDAc+W7W839HA5XdnWn+VP99juQW5V8Esd4lp2wv0=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1 h1:LV8IIkQ057DTMXIODw77NXRHuwdxOds+Vp2Ih62n1n4=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1/go.mod h1:x9KPx4MElC0yaUpzF//YmwaFPEjJAE9uxlMDYnffqqA=
-github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261109183359-8173383e54b4 h1:fX796+IIXA75QSS/mId6xH13uvFlHMGLUjOoyY1DaxA=
-github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261109183359-8173383e54b4/go.mod h1:MLscqE9umeJaweO3ji1vvenL2hTtmBNqIPFfG9pBX0w=
+github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f h1:KnSKakWSIXaptGLINwRKhVgAciNYoHLcX9So+qQATk0=
+github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f/go.mod h1:qL3cQEySSrEeGlFLAKSiehlakJhJF1ZoXYdjfA2IPLo=
 github.com/aws/aws-lambda-go v1.55.1 h1:We2cCp4BwqqH/JW+bEEo1FhgG71rslvjfi4y7KmlrR0=
 github.com/aws/aws-lambda-go v1.55.1/go.mod h1:V+NzkHNR6vBC8C1PDloqSLE+7jYWFiPvJJFiCiTm8nE=
 github.com/aws/aws-sdk-go-v2 v1.48.0 h1:tFU7EJVm7MfyaXLsXdYTZ0Vd6vwt9OljCyqq0gqk0Mc=
@@ -24,8 +24,8 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.12 h1:lqSi8qvAnKC1vfosIm
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.12/go.mod h1:rqPQE2vqkW9YHx5+Gp55sx1wsTM4xtGQLl+TKMjxxrs=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.12 h1:uvX2yaL+aMjkmnrLPPlR/zwjoKFRMoNhhJfeGjfk6qc=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.12/go.mod h1:dicT+2eNhHHqGkxHO7LoXw3QghIUGuzgdmFqaSTopgI=
-github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.75.10 h1:qoiKqY0eoF+27ySUgrqdo8ZQLj65pmrujTjSD0jVr48=
-github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.75.10/go.mod h1:W5Zbeh12w1PJ4DD/p72F+BLPDny6ZHGrMAnQkL1INpA=
+github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.76.0 h1:gMrXzKiqTq2S3hrf3putSaptO8u3valtYx4a2uBCUwo=
+github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.76.0/go.mod h1:jp8ymbmuBPllhwApPAk+G6sbBALmyfhgQuCCJ0w4DLo=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.25 h1:rKwkY3Z+fvt2W0msjdNs6uNewPmXzPayQ961oyuWhes=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.25/go.mod h1:dBuAadQKd1F4Q4ZOg8gnFmuSHMRE40Pe3IfFwbtC4lE=
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.12 h1:wzAqMZ2O4+ij9HQqIrk+P9PBGacE0wOTuWB7Mo97//I=

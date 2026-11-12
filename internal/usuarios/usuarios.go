@@ -32,3 +32,24 @@ func (u *Client) CriarPerfil(ctx context.Context, userID string, in contract.Cri
 	err := u.c.Call(ctx, contract.OpCriarPerfil, userID, in, &p)
 	return p, err
 }
+
+// ListarUsuarios devolve uma página de perfis, do mais novo para o mais
+// antigo. adminID é o admin que pede.
+func (u *Client) ListarUsuarios(ctx context.Context, adminID string, in contract.ListarUsuariosIn) (contract.PaginaUsuarios, error) {
+	var p contract.PaginaUsuarios
+	err := u.c.Call(ctx, contract.OpListarUsuarios, adminID, in, &p)
+	return p, err
+}
+
+// AtualizarUsuario bloqueia, reativa ou troca o papel de in.ID. As regras
+// (a si mesmo, último admin, transição) são do users-service.
+func (u *Client) AtualizarUsuario(ctx context.Context, adminID string, in contract.AtualizarUsuarioIn) (contract.Perfil, error) {
+	var p contract.Perfil
+	err := u.c.Call(ctx, contract.OpAtualizarUsuario, adminID, in, &p)
+	return p, err
+}
+
+// ExcluirUsuario exclui a conta id; o users-service publica UserDeleted.
+func (u *Client) ExcluirUsuario(ctx context.Context, adminID, id string) error {
+	return u.c.Call(ctx, contract.OpExcluirUsuario, adminID, contract.ExcluirUsuarioIn{ID: id}, nil)
+}

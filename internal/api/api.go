@@ -41,7 +41,10 @@ type Deps struct {
 	// gastos respondem 501, a tela do formulário não abre gasto para edição e
 	// a exclusão de categoria não checa gastos (Lambda antes da tarefa 8.5).
 	Gastos GastosService
-	Log    *slog.Logger
+	// Admin é opcional: sem ele, as rotas /admin/* respondem 501 depois da
+	// checagem do grupo admin.
+	Admin AdminService
+	Log   *slog.Logger
 	// CORSOrigins lista as origens aceitas. Só o cmd/local usa; na AWS o CORS
 	// é feito pela HTTP API.
 	CORSOrigins []string
@@ -81,6 +84,10 @@ func New(d Deps) http.Handler {
 			a.rotasDeGastos(mux)
 			futuras = slices.DeleteFunc(futuras, func(r string) bool { return slices.Contains(rotasGastos, r) })
 		}
+	}
+	if d.Admin != nil {
+		a.rotasDeAdmin(mux)
+		futuras = slices.DeleteFunc(slices.Clone(futuras), func(r string) bool { return slices.Contains(rotasAdmin, r) })
 	}
 	for _, rota := range futuras {
 		h := a.autenticado(http.HandlerFunc(naoImplementado))
