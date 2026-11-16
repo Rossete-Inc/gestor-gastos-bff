@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -78,14 +79,14 @@ func TestTelaDashboard(t *testing.T) {
 	// decrescente, e a categoria excluída como "Removida". Cotas: 747,5;
 	// 249,2; 3,3 → 747 + 249 + 3 = 999, e o maior resto (0,5) leva o décimo.
 	querCartao := []fatia{
-		{CategoriaID: "alimentacao", Nome: "Alimentação", Cor: "#E4572E", TotalCentavos: 22_500, PercentualDecimos: 748},
-		{CategoriaID: "c-1", Nome: "Pet", Cor: "#17BEBB", TotalCentavos: 7_500, PercentualDecimos: 249},
-		{CategoriaID: "c-excluida", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 100, PercentualDecimos: 3},
+		{CategoriaID: "alimentacao", Grupo: "CARTAO", Nome: "Alimentação", Cor: "#E4572E", TotalCentavos: 22_500, PercentualDecimos: 748},
+		{CategoriaID: "c-1", Grupo: "CARTAO", Nome: "Pet", Cor: "#17BEBB", TotalCentavos: 7_500, PercentualDecimos: 249},
+		{CategoriaID: "c-excluida", Grupo: "CARTAO", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 100, PercentualDecimos: 3},
 	}
-	if !slices.Equal(d.Pizza.Cartao, querCartao) {
+	if !fatiasIguais(d.Pizza.Cartao, querCartao) {
 		t.Errorf("CARTAO =\n%+v\nquero\n%+v", d.Pizza.Cartao, querCartao)
 	}
-	if !slices.Equal(d.Pizza.Fixo, []fatia{{CategoriaID: "moradia", Nome: "Moradia", Cor: "#4C6EF5", TotalCentavos: 170_000, PercentualDecimos: 1000}}) {
+	if !fatiasIguais(d.Pizza.Fixo, []fatia{{CategoriaID: "moradia", Grupo: "FIXO", Nome: "Moradia", Cor: "#4C6EF5", TotalCentavos: 170_000, PercentualDecimos: 1000}}) {
 		t.Errorf("FIXO = %+v", d.Pizza.Fixo)
 	}
 	if len(d.Pizza.Todas) != 4 || d.Pizza.Todas[0].CategoriaID != "moradia" || d.Pizza.Todas[3].CategoriaID != "c-excluida" {
@@ -96,7 +97,7 @@ func TestTelaDashboard(t *testing.T) {
 		{Grupo: "FIXO", Nome: "Fixo", TotalCentavos: 170_000, PercentualDecimos: 850},
 		{Grupo: "CARTAO", Nome: "Cartão", TotalCentavos: 30_100, PercentualDecimos: 150},
 	}
-	if !slices.Equal(d.Pizza.Grupos, querGrupos) {
+	if !fatiasIguais(d.Pizza.Grupos, querGrupos) {
 		t.Errorf("grupos = %+v", d.Pizza.Grupos)
 	}
 	// Cenário "Percentuais somam 100%", em todas as visões.
@@ -146,12 +147,12 @@ func TestTelaDashboardMesmaCategoriaNosDoisGrupos(t *testing.T) {
 			{CategoriaID: "y", Grupo: "CARTAO", TotalCentavos: 350},
 			{CategoriaID: "x", Grupo: "CARTAO", TotalCentavos: 100},
 		},
-	}, nil)
+	}, referencias{})
 	quero := []fatia{
-		{CategoriaID: "x", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 400, PercentualDecimos: 533},
-		{CategoriaID: "y", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 350, PercentualDecimos: 467},
+		{CategoriaID: "x", Grupo: "FIXO", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 400, PercentualDecimos: 533},
+		{CategoriaID: "y", Grupo: "CARTAO", Nome: "Removida", Cor: "#9E9E9E", TotalCentavos: 350, PercentualDecimos: 467},
 	}
-	if !slices.Equal(res.Pizza.Todas, quero) {
+	if !fatiasIguais(res.Pizza.Todas, quero) {
 		t.Errorf("todas = %+v", res.Pizza.Todas)
 	}
 	if len(res.Pizza.Cartao) != 2 || len(res.Pizza.Fixo) != 1 {
@@ -171,7 +172,7 @@ func TestTelaDashboardMesVazio(t *testing.T) {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
 	conforme(t, req, rec)
-	quero := `{"mes":"2026-12","totalCentavos":0,"totaisPorGrupo":[{"grupo":"CARTAO","totalCentavos":0},{"grupo":"FIXO","totalCentavos":0}],"pizza":{"todas":[],"CARTAO":[],"FIXO":[],"grupos":[]},"ultimos":[]}`
+	quero := `{"mes":"2026-12","totalCentavos":0,"totaisPorGrupo":[{"grupo":"CARTAO","totalCentavos":0},{"grupo":"FIXO","totalCentavos":0}],"totaisPorCartao":[],"pizza":{"todas":[],"CARTAO":[],"FIXO":[],"grupos":[],"cartoes":[]},"ultimos":[]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != quero {
 		t.Errorf("corpo =\n%s\nquero\n%s", got, quero)
 	}
@@ -179,7 +180,7 @@ func TestTelaDashboardMesVazio(t *testing.T) {
 
 func TestTelaDashboardGrupoAusenteNoResumo(t *testing.T) {
 	// Mesmo que o serviço omitisse um grupo, a tela traz CARTAO e FIXO.
-	d := montarDashboard("2026-11", expcontract.ResumoMensalOut{TotaisPorGrupo: []expcontract.TotalGrupo{{Grupo: "FIXO", TotalCentavos: 5}}}, nil)
+	d := montarDashboard("2026-11", expcontract.ResumoMensalOut{TotaisPorGrupo: []expcontract.TotalGrupo{{Grupo: "FIXO", TotalCentavos: 5}}}, referencias{})
 	if !slices.Equal(d.TotaisPorGrupo, []expcontract.TotalGrupo{{Grupo: "CARTAO"}, {Grupo: "FIXO", TotalCentavos: 5}}) {
 		t.Errorf("totais = %+v", d.TotaisPorGrupo)
 	}
@@ -216,4 +217,17 @@ func TestTelaDashboardErros(t *testing.T) {
 	if _, rec = fazer(h, http.MethodGet, "/telas/dashboard?mes=2026-11", tok); rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// fatiasIguais compara as fatias sem o detalhe, que tem testes próprios.
+func fatiasIguais(a, b []fatia) bool {
+	sem := func(fs []fatia) []fatia {
+		out := make([]fatia, len(fs))
+		for i, f := range fs {
+			f.Detalhe = nil
+			out[i] = f
+		}
+		return out
+	}
+	return reflect.DeepEqual(sem(a), sem(b))
 }

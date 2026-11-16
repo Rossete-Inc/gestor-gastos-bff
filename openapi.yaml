@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Gestor de Gastos — BFF
-  version: 0.1.0
+  version: 0.2.0
   description: |
     API do BFF do Gestor de Gastos. É a única API pública: o front chama só
     ela, e ela delega aos serviços por Lambda Invoke (ADR 0004).
@@ -47,6 +47,8 @@ tags:
     description: Lançamento, edição e exclusão de gastos
   - name: categorias
     description: Categorias padrão e personalizadas
+  - name: cartoes
+    description: Cartões de crédito, faturas e limite
   - name: admin
     description: Gestão de usuários (somente admin)
 
@@ -75,9 +77,11 @@ paths:
       operationId: obterTelaDashboard
       summary: Painel do mês
       description: |
-        Totais do mês e por grupo, fatias da pizza nas quatro visões (todas as
-        categorias, só `CARTAO`, só `FIXO` e por grupo) e os 5 gastos mais
-        recentes. Mês sem gastos devolve totais zerados e listas vazias.
+        Totais do mês de referência, por grupo e por cartão; fatias da pizza
+        nas cinco visões (todas as categorias, só `CARTAO`, só `FIXO`, por
+        grupo e por cartão), cada uma com o detalhe da fatia; e os 5 gastos
+        mais recentes. Gasto de cartão conta no mês da fatura. Mês sem gastos
+        devolve totais zerados e listas vazias.
       parameters:
         - $ref: "#/components/parameters/Mes"
       responses:
@@ -96,9 +100,10 @@ paths:
       operationId: obterTelaGastos
       summary: Lista de gastos do mês
       description: |
-        Gastos do mês, do mais recente para o mais antigo, com filtros
-        opcionais por grupo e categoria e paginação por cursor. Traz também
-        as categorias visíveis, para montar os filtros.
+        Gastos do mês de referência, do mais recente para o mais antigo, com
+        filtros opcionais por grupo, categoria e cartão e paginação por
+        cursor. Traz também as categorias visíveis e os cartões (ativos e
+        arquivados), para montar os filtros.
       parameters:
         - $ref: "#/components/parameters/Mes"
         - name: grupo
@@ -108,6 +113,11 @@ paths:
         - name: categoriaId
           in: query
           required: false
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: cartaoId
+          in: query
+          required: false
+          description: ID do cartão, ou `SEM_CARTAO` para os gastos sem cartão.
           schema: { type: string, minLength: 1, maxLength: 64 }
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -127,9 +137,10 @@ paths:
       operationId: obterTelaGastoForm
       summary: Dados do formulário de gasto
       description: |
-        Categorias visíveis agrupadas por grupo. Com `id`, devolve também o
-        gasto para a tela de edição; gasto inexistente ou de outro usuário
-        responde 404.
+        Categorias visíveis agrupadas por grupo e cartões ativos. Com `id`,
+        devolve também o gasto para a tela de edição (e, se o cartão dele
+        estiver arquivado, inclui esse cartão na lista); gasto inexistente ou
+        de outro usuário responde 404.
       parameters:
         - name: id
           in: query
@@ -150,7 +161,10 @@ paths:
       tags: [gastos]
       operationId: criarGasto
       summary: Lançar gasto
-      description: O grupo do gasto é o grupo da categoria escolhida.
+      description: |
+        O grupo do gasto é o grupo da categoria escolhida. Categoria do grupo
+        `CARTAO` exige `cartaoId`; `FIXO` aceita cartão opcional. Com cartão,
+        o gasto entra no mês da fatura (`mesReferencia`).
       requestBody:
         required: true
         content:
@@ -174,7 +188,10 @@ paths:
       tags: [gastos]
       operationId: atualizarGasto
       summary: Editar gasto
-      description: Mesmas validações do lançamento. Trocar a categoria pode trocar o grupo.
+      description: |
+        Mesmas validações do lançamento. Trocar a categoria pode trocar o
+        grupo; trocar a data ou o cartão recalcula o mês de referência e pode
+        mudar o `id` do gasto. Manter o cartão atual vale mesmo arquivado.
       requestBody:
         required: true
         content:
@@ -260,6 +277,132 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: "Há gastos vinculados à categoria (`code`: `categoria_em_uso`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /telas/cartoes:
+    get:
+      tags: [telas]
+      operationId: obterTelaCartoes
+      summary: Cartões com a fatura do mês e o limite
+      description: |
+        Todos os cartões (ativos e arquivados) com o total da fatura do mês
+        pedido, o vencimento dela e o limite usado e disponível hoje. O limite
+        usado soma as faturas que ainda não venceram, inclusive as futuras.
+      parameters:
+        - $ref: "#/components/parameters/Mes"
+      responses:
+        "200":
+          description: Cartões
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaCartoes" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /cartoes:
+    get:
+      tags: [cartoes]
+      operationId: listarCartoes
+      summary: Cartões do usuário
+      description: Ativos e arquivados, em ordem de apelido.
+      responses:
+        "200":
+          description: Cartões
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListaCartoes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [cartoes]
+      operationId: criarCartao
+      summary: Cadastrar cartão
+      description: Apelido único entre os cartões ativos; no máximo 20 ativos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartaoIn" }
+      responses:
+        "201":
+          description: Cartão criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cartao" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: "Já há 20 cartões ativos (`code`: `limite_cartoes`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /cartoes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
+    put:
+      tags: [cartoes]
+      operationId: atualizarCartao
+      summary: Editar cartão
+      description: Mudar os dias não recalcula os gastos já lançados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartaoIn" }
+      responses:
+        "200":
+          description: Cartão atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cartao" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [cartoes]
+      operationId: arquivarCartao
+      summary: Arquivar ou reativar cartão
+      description: Arquivado some do formulário de gasto; os gastos continuam nos totais.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartaoPatch" }
+      responses:
+        "200":
+          description: Cartão atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Cartao" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "Reativar com 20 cartões ativos (`code`: `limite_cartoes`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [cartoes]
+      operationId: excluirCartao
+      summary: Excluir cartão sem gastos
+      responses:
+        "204": { description: Cartão excluído }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "Há gastos no cartão; arquive-o (`code`: `cartao_em_uso`)."
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -554,17 +697,24 @@ components:
         categoriaId: { type: string, minLength: 1, maxLength: 64, example: alimentacao }
         descricao: { type: string, maxLength: 140, example: Almoço }
         recorrente: { type: boolean, default: false, description: Só informativo no MVP }
+        cartaoId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Cartão ativo do usuário. Obrigatório para categoria do grupo `CARTAO`; opcional para `FIXO`.
 
     Gasto:
       type: object
-      description: Gasto com a categoria já resolvida (nome e cor).
-      required: [id, valorCentavos, data, grupo, categoria, recorrente]
+      description: Gasto com a categoria e o cartão já resolvidos (nome e cor).
+      required: [id, valorCentavos, data, mesReferencia, grupo, categoria, recorrente]
       properties:
         id: { type: string }
         valorCentavos: { type: integer, format: int64, example: 4590 }
         data: { $ref: "#/components/schemas/Data" }
+        mesReferencia: { $ref: "#/components/schemas/Mes" }
         grupo: { $ref: "#/components/schemas/Grupo" }
         categoria: { $ref: "#/components/schemas/CategoriaResumo" }
+        cartao: { $ref: "#/components/schemas/CartaoResumo" }
         descricao: { type: string }
         recorrente: { type: boolean }
 
@@ -578,20 +728,33 @@ components:
           items: { $ref: "#/components/schemas/Gasto" }
         nextCursor: { type: string }
         categorias: { $ref: "#/components/schemas/CategoriasPorGrupo" }
+        cartoes:
+          type: array
+          description: Todos os cartões, ativos e arquivados, para o filtro.
+          items: { $ref: "#/components/schemas/Cartao" }
 
     TelaGastoForm:
       type: object
-      required: [categorias]
+      required: [categorias, cartoes]
       properties:
         categorias: { $ref: "#/components/schemas/CategoriasPorGrupo" }
+        cartoes:
+          type: array
+          description: Cartões ativos, mais o cartão arquivado do gasto em edição.
+          items: { $ref: "#/components/schemas/Cartao" }
         gasto: { $ref: "#/components/schemas/Gasto" }
 
     Fatia:
       type: object
-      description: Fatia da pizza. Categorias trazem `categoriaId` e `cor`; grupos trazem `grupo`.
-      required: [nome, totalCentavos, percentualDecimos]
+      description: |
+        Fatia da pizza. Categorias trazem `categoriaId`, `grupo` e `cor`;
+        grupos trazem `grupo`; cartões trazem `cartaoId` (ausente na fatia
+        "Sem cartão") e `cor`. `detalhe` divide o valor da fatia: por cartão
+        nas visões de categoria e de grupo, por grupo na visão de cartões.
+      required: [nome, totalCentavos, percentualDecimos, detalhe]
       properties:
         categoriaId: { type: string }
+        cartaoId: { type: string }
         grupo: { $ref: "#/components/schemas/Grupo" }
         nome: { type: string }
         cor: { $ref: "#/components/schemas/Cor" }
@@ -602,6 +765,28 @@ components:
           minimum: 0
           maximum: 1000
           description: Décimos de ponto percentual (750 = 75,0%). Somam 1000 em cada visão não vazia.
+        detalhe:
+          type: array
+          description: Partes da fatia, do maior valor para o menor; a soma é o total da fatia.
+          items: { $ref: "#/components/schemas/ParteFatia" }
+
+    ParteFatia:
+      type: object
+      required: [rotulo, totalCentavos]
+      properties:
+        rotulo: { type: string, example: Nubank }
+        cor: { $ref: "#/components/schemas/Cor" }
+        totalCentavos: { $ref: "#/components/schemas/Centavos" }
+
+    TotalCartao:
+      type: object
+      description: Total de um cartão no mês. Sem `cartaoId` = "Sem cartão".
+      required: [nome, totalCentavos]
+      properties:
+        cartaoId: { type: string }
+        nome: { type: string, example: Nubank }
+        cor: { $ref: "#/components/schemas/Cor" }
+        totalCentavos: { $ref: "#/components/schemas/Centavos" }
 
     TotalGrupo:
       type: object
@@ -612,7 +797,7 @@ components:
 
     TelaDashboard:
       type: object
-      required: [mes, totalCentavos, totaisPorGrupo, pizza, ultimos]
+      required: [mes, totalCentavos, totaisPorGrupo, totaisPorCartao, pizza, ultimos]
       properties:
         mes: { $ref: "#/components/schemas/Mes" }
         totalCentavos: { $ref: "#/components/schemas/Centavos" }
@@ -622,10 +807,14 @@ components:
           minItems: 2
           maxItems: 2
           items: { $ref: "#/components/schemas/TotalGrupo" }
+        totaisPorCartao:
+          type: array
+          description: Cartões com gasto no mês e "Sem cartão", do maior para o menor; a soma é igual a totalCentavos.
+          items: { $ref: "#/components/schemas/TotalCartao" }
         pizza:
           type: object
           description: Fatias em ordem decrescente de valor. Listas vazias no mês sem gastos.
-          required: [todas, CARTAO, FIXO, grupos]
+          required: [todas, CARTAO, FIXO, grupos, cartoes]
           properties:
             todas:
               type: array
@@ -639,8 +828,93 @@ components:
             grupos:
               type: array
               items: { $ref: "#/components/schemas/Fatia" }
+            cartoes:
+              type: array
+              items: { $ref: "#/components/schemas/Fatia" }
         ultimos:
           type: array
           maxItems: 5
           description: Até 5 gastos mais recentes do mês.
           items: { $ref: "#/components/schemas/Gasto" }
+
+    Cartao:
+      type: object
+      required: [id, apelido, cor, diaFechamento, diaVencimento, limiteCentavos, arquivado]
+      properties:
+        id: { type: string }
+        apelido: { type: string, example: Nubank }
+        cor: { $ref: "#/components/schemas/Cor" }
+        diaFechamento: { $ref: "#/components/schemas/DiaDoMes" }
+        diaVencimento: { $ref: "#/components/schemas/DiaDoMes" }
+        limiteCentavos: { $ref: "#/components/schemas/Centavos" }
+        arquivado: { type: boolean }
+
+    CartaoIn:
+      type: object
+      required: [apelido, cor, diaFechamento, diaVencimento, limiteCentavos]
+      additionalProperties: false
+      properties:
+        apelido: { type: string, minLength: 1, maxLength: 40, example: Nubank }
+        cor: { $ref: "#/components/schemas/Cor" }
+        diaFechamento: { $ref: "#/components/schemas/DiaDoMes" }
+        diaVencimento: { $ref: "#/components/schemas/DiaDoMes" }
+        limiteCentavos:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000000
+          example: 500000
+
+    CartaoPatch:
+      type: object
+      required: [arquivado]
+      additionalProperties: false
+      properties:
+        arquivado: { type: boolean, description: true arquiva; false reativa }
+
+    CartaoResumo:
+      type: object
+      required: [id, apelido, cor]
+      properties:
+        id: { type: string }
+        apelido: { type: string }
+        cor: { $ref: "#/components/schemas/Cor" }
+
+    DiaDoMes:
+      type: integer
+      format: int32
+      minimum: 1
+      maximum: 31
+      description: Dia do mês; um dia que não existe no mês vale como o último dia.
+
+    ListaCartoes:
+      type: object
+      required: [itens]
+      properties:
+        itens:
+          type: array
+          items: { $ref: "#/components/schemas/Cartao" }
+
+    ResumoCartao:
+      type: object
+      required: [cartao, faturaCentavos, vencimento, limiteUsadoCentavos, limiteDisponivelCentavos]
+      properties:
+        cartao: { $ref: "#/components/schemas/Cartao" }
+        faturaCentavos: { $ref: "#/components/schemas/Centavos" }
+        vencimento: { $ref: "#/components/schemas/Data" }
+        limiteUsadoCentavos: { $ref: "#/components/schemas/Centavos" }
+        limiteDisponivelCentavos:
+          type: integer
+          format: int64
+          description: Limite menos o usado; pode ser negativo.
+
+    TelaCartoes:
+      type: object
+      required: [mes, hoje, cartoes]
+      properties:
+        mes: { $ref: "#/components/schemas/Mes" }
+        hoje: { $ref: "#/components/schemas/Data" }
+        cartoes:
+          type: array
+          description: Na ordem de apelido; ativos e arquivados.
+          items: { $ref: "#/components/schemas/ResumoCartao" }

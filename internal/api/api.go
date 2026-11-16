@@ -45,6 +45,9 @@ type Deps struct {
 	// checagem do grupo admin.
 	Admin AdminService
 	Log   *slog.Logger
+	// Agora é o relógio usado para o "hoje" do usuário (tela de cartões);
+	// nil = time.Now. Os testes fixam a data.
+	Agora func() time.Time
 	// CORSOrigins lista as origens aceitas. Só o cmd/local usa; na AWS o CORS
 	// é feito pela HTTP API.
 	CORSOrigins []string
@@ -59,6 +62,12 @@ var rotasFuturas = []string{
 	"POST /gastos",
 	"PUT /gastos/{id}",
 	"DELETE /gastos/{id}",
+	"GET /telas/cartoes",
+	"GET /cartoes",
+	"POST /cartoes",
+	"PUT /cartoes/{id}",
+	"PATCH /cartoes/{id}",
+	"DELETE /cartoes/{id}",
 	"GET /categorias",
 	"POST /categorias",
 	"DELETE /categorias/{id}",

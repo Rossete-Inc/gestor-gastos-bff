@@ -112,6 +112,11 @@ func (f *fakeAWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: pagina})
 		return
 	}
+	if req.Operation == expcontract.OpListarCartoes {
+		lista, _ := json.Marshal(expcontract.ListarCartoesOut{Items: []expcontract.Cartao{}})
+		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: lista})
+		return
+	}
 	if req.Operation == catcontract.OpListarCategorias {
 		lista, _ := json.Marshal(catcontract.CategoriasPorGrupo{
 			Cartao: []catcontract.Categoria{{ID: "alimentacao", Nome: "Alimentação", Grupo: "CARTAO", Cor: "#F97316", Padrao: true}},
@@ -238,7 +243,8 @@ func TestGastosInvocaOExpensesServicePorLambda(t *testing.T) {
 		t.Errorf("corpo = %s", out.Body)
 	}
 	invocadas := strings.Join(fake.funcoes, ",")
-	if len(fake.funcoes) != 2 || !strings.Contains(invocadas, expensesArn) || !strings.Contains(invocadas, categoriesArn) {
+	// Gastos e cartões no expenses-service, categorias no categories-service.
+	if len(fake.funcoes) != 3 || !strings.Contains(invocadas, expensesArn) || !strings.Contains(invocadas, categoriesArn) {
 		t.Errorf("funções invocadas = %v", fake.funcoes)
 	}
 }

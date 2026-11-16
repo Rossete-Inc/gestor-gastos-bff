@@ -108,47 +108,59 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// telaGastoForm devolve as categorias para o formulário de gasto e, com
-// ?id=, também o gasto para a tela de edição. O modo de edição precisa do
-// expenses-service: sem ele (Lambda antes da tarefa 8.5), responde 501.
+// telaGastoForm devolve as categorias e os cartões ativos para o formulário
+// de gasto e, com ?id=, também o gasto para a tela de edição; se o cartão
+// dele estiver arquivado, ele entra na lista para continuar selecionado.
+// Sem o expenses-service (Lambda antes da tarefa 8.5), a lista de cartões
+// vem vazia e o modo de edição responde 501.
 func (a *api) telaGastoForm(w http.ResponseWriter, r *http.Request) {
 	c, _ := auth.FromContext(r.Context())
 	q := r.URL.Query()
-	if !q.Has("id") {
-		cats, err := a.deps.Categorias.Listar(r.Context(), c.UserID)
-		if err != nil {
+	var id string
+	if q.Has("id") {
+		if a.deps.Gastos == nil {
+			naoImplementado(w, r)
+			return
+		}
+		var err error
+		if id, err = idValido(q.Get("id")); err != nil {
 			a.erro(w, r, err)
 			return
 		}
-		escreverJSON(w, http.StatusOK, telaGastoForm{Categorias: cats})
-		return
-	}
-	if a.deps.Gastos == nil {
-		naoImplementado(w, r)
-		return
-	}
-	id, err := idValido(q.Get("id"))
-	if err != nil {
-		a.erro(w, r, err)
-		return
 	}
 	var cats catcontract.CategoriasPorGrupo
+	var cartoes []expcontract.Cartao
 	var g expcontract.Gasto
-	err = emParalelo(
+	tarefas := []func() error{
 		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.UserID); return err },
-		func() (err error) { g, err = a.deps.Gastos.Obter(r.Context(), c.UserID, id); return err },
-	)
-	if err != nil {
+	}
+	if a.deps.Gastos != nil {
+		tarefas = append(tarefas, func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.UserID); return err })
+	}
+	if id != "" {
+		tarefas = append(tarefas, func() (err error) { g, err = a.deps.Gastos.Obter(r.Context(), c.UserID, id); return err })
+	}
+	if err := emParalelo(tarefas...); err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	out := resolver(g, porID(cats))
-	escreverJSON(w, http.StatusOK, telaGastoForm{Categorias: cats, Gasto: &out})
+	tela := telaGastoForm{Categorias: cats, Cartoes: []expcontract.Cartao{}}
+	for _, k := range cartoes {
+		if !k.Arquivado || (id != "" && k.ID == g.CartaoID) {
+			tela.Cartoes = append(tela.Cartoes, k)
+		}
+	}
+	if id != "" {
+		out := novasReferencias(cats, cartoes).resolver(g)
+		tela.Gasto = &out
+	}
+	escreverJSON(w, http.StatusOK, tela)
 }
 
 // telaGastoForm é o TelaGastoForm do openapi.
 type telaGastoForm struct {
 	Categorias catcontract.CategoriasPorGrupo `json:"categorias"`
+	Cartoes    []expcontract.Cartao           `json:"cartoes"`
 	Gasto      *gastoOut                      `json:"gasto,omitempty"`
 }
 

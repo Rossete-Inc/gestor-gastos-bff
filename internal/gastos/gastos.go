@@ -78,6 +78,12 @@ func (c *Client) ResumoMensal(ctx context.Context, userID, mes string) (contract
 	if out.TotaisPorCategoria == nil {
 		out.TotaisPorCategoria = []contract.TotalCategoria{}
 	}
+	if out.TotaisPorCartao == nil {
+		out.TotaisPorCartao = []contract.TotalCartao{}
+	}
+	if out.TotaisPorCategoriaECartao == nil {
+		out.TotaisPorCategoriaECartao = []contract.TotalCategoriaCartao{}
+	}
 	if out.Recentes == nil {
 		out.Recentes = []contract.Gasto{}
 	}

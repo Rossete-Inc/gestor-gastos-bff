@@ -13,8 +13,8 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 )
 
-// GastosService é o que as rotas usam do expenses-service; *gastos.Client o
-// satisfaz.
+// GastosService é o que as rotas usam do expenses-service, gastos e cartões
+// (ADR 0009); *gastos.Client o satisfaz.
 type GastosService interface {
 	Criar(ctx context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error)
 	Obter(ctx context.Context, userID, id string) (expcontract.Gasto, error)
@@ -23,6 +23,13 @@ type GastosService interface {
 	Listar(ctx context.Context, userID string, in expcontract.ListarGastosIn) (expcontract.PaginaGastos, error)
 	ExisteNaCategoria(ctx context.Context, userID, categoriaID string) (bool, error)
 	ResumoMensal(ctx context.Context, userID, mes string) (expcontract.ResumoMensalOut, error)
+
+	ListarCartoes(ctx context.Context, userID string) ([]expcontract.Cartao, error)
+	CriarCartao(ctx context.Context, userID string, in expcontract.CartaoIn) (expcontract.Cartao, error)
+	AtualizarCartao(ctx context.Context, userID, id string, in expcontract.CartaoIn) (expcontract.Cartao, error)
+	ArquivarCartao(ctx context.Context, userID, id string, arquivado bool) (expcontract.Cartao, error)
+	ExcluirCartao(ctx context.Context, userID, id string) error
+	ResumoCartoes(ctx context.Context, userID, mes, hoje string) (expcontract.ResumoCartoesOut, error)
 }
 
 // rotasGastos são servidas quando Deps.Gastos e Deps.Categorias estão
@@ -33,6 +40,12 @@ var rotasGastos = []string{
 	"POST /gastos",
 	"PUT /gastos/{id}",
 	"DELETE /gastos/{id}",
+	"GET /telas/cartoes",
+	"GET /cartoes",
+	"POST /cartoes",
+	"PUT /cartoes/{id}",
+	"PATCH /cartoes/{id}",
+	"DELETE /cartoes/{id}",
 }
 
 // Categoria mostrada num gasto cuja categoria já foi excluída. A exclusão de
@@ -51,6 +64,7 @@ func (a *api) rotasDeGastos(mux *http.ServeMux) {
 	mux.Handle("POST /gastos", a.autenticado(http.HandlerFunc(a.criarGasto)))
 	mux.Handle("PUT /gastos/{id}", a.autenticado(http.HandlerFunc(a.atualizarGasto)))
 	mux.Handle("DELETE /gastos/{id}", a.autenticado(http.HandlerFunc(a.excluirGasto)))
+	a.rotasDeCartoes(mux)
 }
 
 // gastoIn é o corpo do POST e do PUT (GastoIn no openapi). O grupo não vem
@@ -61,6 +75,7 @@ type gastoIn struct {
 	CategoriaID   string `json:"categoriaId"`
 	Descricao     string `json:"descricao"`
 	Recorrente    bool   `json:"recorrente"`
+	CartaoID      string `json:"cartaoId"`
 }
 
 // categoriaResumo é o CategoriaResumo do openapi.
@@ -70,36 +85,82 @@ type categoriaResumo struct {
 	Cor  string `json:"cor"`
 }
 
-// gastoOut é o Gasto do openapi: o gasto com a categoria resolvida.
+// cartaoResumo é o CartaoResumo do openapi.
+type cartaoResumo struct {
+	ID      string `json:"id"`
+	Apelido string `json:"apelido"`
+	Cor     string `json:"cor"`
+}
+
+// gastoOut é o Gasto do openapi: o gasto com a categoria e o cartão
+// resolvidos.
 type gastoOut struct {
 	ID            string          `json:"id"`
 	ValorCentavos int64           `json:"valorCentavos"`
 	Data          string          `json:"data"`
+	MesReferencia string          `json:"mesReferencia"`
 	Grupo         string          `json:"grupo"`
 	Categoria     categoriaResumo `json:"categoria"`
+	Cartao        *cartaoResumo   `json:"cartao,omitempty"`
 	Descricao     string          `json:"descricao,omitempty"`
 	Recorrente    bool            `json:"recorrente"`
 }
+
+// Cartão mostrado num gasto cujo cartão não existe mais. A exclusão de cartão
+// com gastos é bloqueada; a corrida é aceita como na categoria.
+const (
+	apelidoCartaoRemovido = "Cartão removido"
+	corCartaoRemovido     = "#9E9E9E"
+)
 
 func resumo(c catcontract.Categoria) categoriaResumo {
 	return categoriaResumo{ID: c.ID, Nome: c.Nome, Cor: c.Cor}
 }
 
-// resolver junta a categoria ao gasto. Categoria que não está mais entre as
-// visíveis aparece como "Removida".
-func resolver(g expcontract.Gasto, cats map[string]catcontract.Categoria) gastoOut {
-	c, ok := cats[g.CategoriaID]
+// referencias são as categorias e os cartões visíveis, por ID, para resolver
+// os gastos.
+type referencias struct {
+	categorias map[string]catcontract.Categoria
+	cartoes    map[string]expcontract.Cartao
+}
+
+func novasReferencias(cats catcontract.CategoriasPorGrupo, cartoes []expcontract.Cartao) referencias {
+	m := make(map[string]expcontract.Cartao, len(cartoes))
+	for _, c := range cartoes {
+		m[c.ID] = c
+	}
+	return referencias{categorias: porID(cats), cartoes: m}
+}
+
+func (ref referencias) cartao(id string) *cartaoResumo {
+	if id == "" {
+		return nil
+	}
+	if c, ok := ref.cartoes[id]; ok {
+		return &cartaoResumo{ID: c.ID, Apelido: c.Apelido, Cor: c.Cor}
+	}
+	return &cartaoResumo{ID: id, Apelido: apelidoCartaoRemovido, Cor: corCartaoRemovido}
+}
+
+// resolver junta a categoria e o cartão ao gasto. Categoria que não está mais
+// entre as visíveis aparece como "Removida".
+func (ref referencias) resolver(g expcontract.Gasto) gastoOut {
+	c, ok := ref.categorias[g.CategoriaID]
 	r := categoriaResumo{ID: g.CategoriaID, Nome: nomeCategoriaRemovida, Cor: corCategoriaRemovida}
 	if ok {
 		r = resumo(c)
 	}
-	return comCategoria(g, r)
+	return comCategoria(g, r, ref.cartao(g.CartaoID))
 }
 
-func comCategoria(g expcontract.Gasto, c categoriaResumo) gastoOut {
+func comCategoria(g expcontract.Gasto, c categoriaResumo, cartao *cartaoResumo) gastoOut {
+	mes := g.MesReferencia
+	if mes == "" && len(g.Data) >= 7 {
+		mes = g.Data[:7]
+	}
 	return gastoOut{
-		ID: g.ID, ValorCentavos: g.ValorCentavos, Data: g.Data, Grupo: g.Grupo,
-		Categoria: c, Descricao: g.Descricao, Recorrente: g.Recorrente,
+		ID: g.ID, ValorCentavos: g.ValorCentavos, Data: g.Data, MesReferencia: mes, Grupo: g.Grupo,
+		Categoria: c, Cartao: cartao, Descricao: g.Descricao, Recorrente: g.Recorrente,
 	}
 }
 
@@ -135,25 +196,38 @@ func (a *api) categoriaDoGasto(ctx context.Context, userID, id string) (catcontr
 }
 
 // salvarGasto valida o corpo e a categoria e chama gravar com o GastoIn do
-// expenses-service. Devolve o gasto com a categoria resolvida.
+// expenses-service. Categoria do grupo CARTAO exige cartão (spec
+// lancamento-gastos, "Gasto de cartão sem cartão"); o serviço confere se o
+// cartão existe e está ativo. Devolve o gasto com a categoria e o cartão
+// resolvidos.
 func (a *api) salvarGasto(r *http.Request, w http.ResponseWriter, gravar func(ctx context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error)) (gastoOut, error) {
 	c, _ := auth.FromContext(r.Context())
 	var in gastoIn
 	if err := lerJSON(w, r, &in); err != nil {
 		return gastoOut{}, err
 	}
-	cat, err := a.categoriaDoGasto(r.Context(), c.UserID, in.CategoriaID)
+	var cat catcontract.Categoria
+	var cartoes []expcontract.Cartao
+	err := emParalelo(
+		func() (err error) { cat, err = a.categoriaDoGasto(r.Context(), c.UserID, in.CategoriaID); return err },
+		func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.UserID); return err },
+	)
 	if err != nil {
 		return gastoOut{}, err
 	}
+	if cat.Grupo == catcontract.GrupoCartao && in.CartaoID == "" {
+		return gastoOut{}, errs.Validation("Dados do gasto inválidos.",
+			errs.FieldError{Field: "cartaoId", Message: "obrigatório para categorias de cartão"})
+	}
 	g, err := gravar(r.Context(), c.UserID, expcontract.GastoIn{
 		ValorCentavos: in.ValorCentavos, Data: in.Data, CategoriaID: cat.ID, Grupo: cat.Grupo,
-		Descricao: in.Descricao, Recorrente: in.Recorrente,
+		Descricao: in.Descricao, Recorrente: in.Recorrente, CartaoID: in.CartaoID,
 	})
 	if err != nil {
 		return gastoOut{}, err
 	}
-	return comCategoria(g, resumo(cat)), nil
+	ref := novasReferencias(catcontract.CategoriasPorGrupo{}, cartoes)
+	return comCategoria(g, resumo(cat), ref.cartao(g.CartaoID)), nil
 }
 
 func (a *api) criarGasto(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +275,7 @@ type telaGastos struct {
 	Itens      []gastoOut                     `json:"itens"`
 	NextCursor string                         `json:"nextCursor,omitempty"`
 	Categorias catcontract.CategoriasPorGrupo `json:"categorias"`
+	Cartoes    []expcontract.Cartao           `json:"cartoes"`
 }
 
 // parametroInvalido é o 400 de query string malformada.
@@ -212,7 +287,8 @@ func parametroInvalido(nome string) error {
 func listagemDaQuery(r *http.Request) (expcontract.ListarGastosIn, error) {
 	q := r.URL.Query()
 	in := expcontract.ListarGastosIn{
-		Mes: q.Get("mes"), Grupo: q.Get("grupo"), CategoriaID: q.Get("categoriaId"), Cursor: q.Get("cursor"),
+		Mes: q.Get("mes"), Grupo: q.Get("grupo"), CategoriaID: q.Get("categoriaId"),
+		CartaoID: q.Get("cartaoId"), Cursor: q.Get("cursor"),
 	}
 	switch {
 	case !padraoMes.MatchString(in.Mes):
@@ -221,6 +297,8 @@ func listagemDaQuery(r *http.Request) (expcontract.ListarGastosIn, error) {
 		return in, parametroInvalido("grupo (CARTAO ou FIXO)")
 	case q.Has("categoriaId") && (in.CategoriaID == "" || len(in.CategoriaID) > maxID):
 		return in, parametroInvalido("categoriaId")
+	case q.Has("cartaoId") && (in.CartaoID == "" || len(in.CartaoID) > maxID):
+		return in, parametroInvalido("cartaoId")
 	case q.Has("cursor") && (in.Cursor == "" || len(in.Cursor) > 2048):
 		return in, errs.BadRequest("cursor_invalido", "Cursor de paginação inválido. Volte para a primeira página.")
 	}
@@ -234,18 +312,22 @@ func listagemDaQuery(r *http.Request) (expcontract.ListarGastosIn, error) {
 	return in, nil
 }
 
-// emParalelo roda f e g ao mesmo tempo e devolve o primeiro erro.
-func emParalelo(f, g func() error) error {
+// emParalelo roda as funções ao mesmo tempo e devolve o primeiro erro, na
+// ordem em que foram passadas.
+func emParalelo(fs ...func() error) error {
 	var wg sync.WaitGroup
-	var errF, errG error
-	wg.Add(2)
-	go func() { defer wg.Done(); errF = f() }()
-	go func() { defer wg.Done(); errG = g() }()
-	wg.Wait()
-	if errF != nil {
-		return errF
+	erros := make([]error, len(fs))
+	wg.Add(len(fs))
+	for i, f := range fs {
+		go func() { defer wg.Done(); erros[i] = f() }()
 	}
-	return errG
+	wg.Wait()
+	for _, err := range erros {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *api) telaGastos(w http.ResponseWriter, r *http.Request) {
@@ -257,18 +339,30 @@ func (a *api) telaGastos(w http.ResponseWriter, r *http.Request) {
 	}
 	var pagina expcontract.PaginaGastos
 	var cats catcontract.CategoriasPorGrupo
+	var cartoes []expcontract.Cartao
 	err = emParalelo(
 		func() (err error) { pagina, err = a.deps.Gastos.Listar(r.Context(), c.UserID, in); return err },
 		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.UserID); return err },
+		func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.UserID); return err },
 	)
 	if err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	m := porID(cats)
+	ref := novasReferencias(cats, cartoes)
 	itens := make([]gastoOut, 0, len(pagina.Items))
 	for _, g := range pagina.Items {
-		itens = append(itens, resolver(g, m))
+		itens = append(itens, ref.resolver(g))
 	}
-	escreverJSON(w, http.StatusOK, telaGastos{Mes: in.Mes, Itens: itens, NextCursor: pagina.NextCursor, Categorias: cats})
+	escreverJSON(w, http.StatusOK, telaGastos{
+		Mes: in.Mes, Itens: itens, NextCursor: pagina.NextCursor, Categorias: cats, Cartoes: naoNulo(cartoes),
+	})
+}
+
+// naoNulo devolve a lista, ou uma vazia se ela for nula (o JSON traz []).
+func naoNulo[T any](l []T) []T {
+	if l == nil {
+		return []T{}
+	}
+	return l
 }

@@ -9,9 +9,11 @@ O [`openapi.yaml`](openapi.yaml) é a fonte da verdade da API. O frontend gera o
 | Rota | Tela ou uso |
 | --- | --- |
 | `GET /me` | Perfil; cria o perfil sob demanda se ainda não existir |
-| `GET /telas/dashboard?mes=` | Painel: totais, pizza nas 4 visões e últimos 5 gastos |
-| `GET /telas/gastos?mes=&grupo=&categoriaId=&cursor=` | Lista de gastos paginada, com as categorias para os filtros |
-| `GET /telas/gasto-form?id=` | Formulário de gasto; com `id`, traz o gasto para edição |
+| `GET /telas/dashboard?mes=` | Painel: totais (por grupo e por cartão), pizza nas 5 visões com o detalhe de cada fatia e últimos 5 gastos |
+| `GET /telas/gastos?mes=&grupo=&categoriaId=&cartaoId=&cursor=` | Lista de gastos paginada, com as categorias e os cartões para os filtros |
+| `GET /telas/gasto-form?id=` | Formulário de gasto com categorias e cartões ativos; com `id`, traz o gasto para edição |
+| `GET /telas/cartoes?mes=` | Cartões com a fatura do mês, o vencimento e o limite usado e disponível hoje |
+| `GET /cartoes`, `POST /cartoes`, `PUT/PATCH/DELETE /cartoes/{id}` | Listar, cadastrar, editar, arquivar/reativar e excluir cartão |
 | `POST /gastos`, `PUT /gastos/{id}`, `DELETE /gastos/{id}` | Lançar, editar e excluir gasto |
 | `GET /categorias`, `POST /categorias`, `DELETE /categorias/{id}` | Categorias padrão e personalizadas |
 | `GET /admin/telas/usuarios` | Lista de usuários (admin) |
@@ -100,7 +102,9 @@ Regras do BFF nas rotas de gastos:
 - **Categoria do gasto:** o BFF busca a categoria no categories-service (`ObterCategoria`). Inexistente ou de outro usuário vira 422 no campo `categoriaId`, e o expenses-service nem é chamado.
 - **Categoria em uso:** antes de excluir uma categoria, o BFF pergunta ao expenses-service (`ExisteGastoNaCategoria`) e responde 409 `categoria_em_uso`. A corrida entre a checagem e a exclusão é aceita no MVP.
 - **Categoria removida:** um gasto cuja categoria não está mais entre as visíveis aparece com a categoria "Removida" (cor `#9E9E9E`).
-- **Telas:** `/telas/gastos`, `/telas/gasto-form?id=` e `/telas/dashboard` buscam gastos e categorias em paralelo.
+- **Telas:** `/telas/gastos`, `/telas/gasto-form?id=` e `/telas/dashboard` buscam gastos, categorias e cartões em paralelo.
+- **Cartões (ADR 0009):** moram no expenses-service, que valida o cartão do gasto e calcula o mês da fatura (`mesReferencia`). O BFF exige `cartaoId` quando a categoria é do grupo `CARTAO` (422 no campo `cartaoId`), resolve o apelido e a cor do cartão em cada gasto ("Cartão removido" se ele não existir mais) e calcula o `hoje` da tela de cartões em Brasília (UTC−3 fixo).
+- **Detalhe da fatia:** cada fatia da pizza traz `detalhe`: por cartão (com "Sem cartão") nas visões de categoria e de grupo, e por grupo na visão `cartoes`.
 - **Painel:** o expenses-service (`ResumoMensal`) devolve as somas exatas em centavos; o BFF junta nome e cor das categorias e calcula `percentualDecimos` pelo método do maior resto ([`internal/painel`](internal/painel)), para que cada visão não vazia some 1000 (100,0%). As visões `CARTAO` e `FIXO` têm percentuais sobre o total do grupo. Na visão `todas`, uma categoria que aparecer nos dois grupos vira uma fatia só. A visão `grupos` só tem os grupos com gasto no mês. Fatias em ordem decrescente de valor.
 - **Query string:** `mes` fora de `AAAA-MM`, `grupo` fora de `CARTAO`/`FIXO`, `limit` fora de 1 a 100 ou `categoriaId` vazio respondem 400 `parametro_invalido`.
 
@@ -118,7 +122,8 @@ Regras do BFF nas rotas de admin:
 | `GET /me` | Implementada (5.4) |
 | `GET/POST /categorias`, `DELETE /categorias/{id}`, `GET /telas/gasto-form` | Implementadas (7.3), em `dev` desde a 7.5. O 409 `categoria_em_uso` e o `?id=` do formulário entraram na 8.3 |
 | `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas (8.3), em `dev` desde a 8.5, junto com o `?id=` do formulário e a checagem de gastos na exclusão de categoria |
-| `GET /telas/dashboard` | Implementada (9.2). O smoke test em `dev` confere o painel com o gasto de teste |
+| `GET /telas/dashboard` | Implementada (9.2). O smoke test em `dev` confere o painel com o gasto de teste. Totais por cartão, visão `cartoes` e detalhe das fatias na change `cartoes-credito` (3.2) |
+| `GET /telas/cartoes`, `GET/POST /cartoes`, `PUT/PATCH/DELETE /cartoes/{id}` | Implementadas na change `cartoes-credito` (3.2) |
 | `GET /admin/telas/usuarios`, `PATCH/DELETE /admin/usuarios/{id}` | Implementadas (10.2). Em `dev`, `PATCH` e `DELETE` respondem 400 `operacao_desconhecida` do users-service até a 10.4 dar à Lambda dele o User Pool e o barramento de eventos |
 
 ## Estrutura
