@@ -22,9 +22,13 @@
 #      expenses-service (com o segredo dos cursores) -> DynamoDB. O gasto de
 #      teste é excluído no fim, e um gasto que sobrar de uma execução que
 #      falhou some no próximo DELETE do mesmo dia.
-#   6. Painel (tarefa 9.2): GET /telas/dashboard do mês com o gasto de teste
-#      ainda lançado, o que exercita a operação ResumoMensal e os
-#      percentuais (cada visão não vazia soma 1000 décimos).
+#   6. Painel (tarefa 9.2): GET /telas/dashboard do mês da fatura do gasto de
+#      teste, ainda lançado, o que exercita a operação ResumoMensal, os
+#      percentuais (cada visão não vazia soma 1000 décimos) e os totais por
+#      cartão (change cartoes-credito).
+#   6b. Cartões (cartoes-credito): o gasto de teste é lançado num cartão de
+#      smoke test (reaproveitado se sobrar de outra execução), GET
+#      /telas/cartoes mostra a fatura dele, e o cartão é excluído no fim.
 #   7. Admin (tarefa 10.2): GET /admin/telas/usuarios com o token de cliente
 #      responde 403 somente_admin (rota publicada e restrita ao grupo admin).
 #
@@ -169,13 +173,27 @@ jq -e --arg mes "$mes" '.mes == $mes and (.itens | type == "array") and (.catego
   || erro "GET /telas/gastos devolveu uma tela inesperada: $(head -c 500 "$tmp/corpo")"
 echo "GET /telas/gastos?mes=$mes: 200 (ok)"
 
+# Categoria do grupo CARTAO exige cartão (cartoes-credito): reaproveita o
+# cartão de smoke test ativo, se sobrou de uma execução que falhou, ou cria.
+status=$(get "$API_URL/cartoes" "$token")
+[ "$status" = "200" ] || erro "GET /cartoes devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+cartao=$(jq -r '[.itens[] | select(.apelido == "Smoke test" and (.arquivado | not))][0].id // empty' "$tmp/corpo")
+if [ -z "$cartao" ]; then
+  status=$(enviar POST "$API_URL/cartoes" "$token" \
+    '{"apelido":"Smoke test","cor":"#9E9E9E","diaFechamento":25,"diaVencimento":5,"limiteCentavos":100}')
+  [ "$status" = "201" ] || erro "POST /cartoes devolveu $status, esperava 201: $(head -c 500 "$tmp/corpo")"
+  cartao=$(jq -r .id "$tmp/corpo")
+fi
+echo "cartão de smoke test: $cartao (ok)"
+
 status=$(enviar POST "$API_URL/gastos" "$token" \
-  "{\"valorCentavos\":1,\"data\":\"$hoje\",\"categoriaId\":\"alimentacao\",\"descricao\":\"smoke test\"}")
+  "{\"valorCentavos\":1,\"data\":\"$hoje\",\"categoriaId\":\"alimentacao\",\"descricao\":\"smoke test\",\"cartaoId\":\"$cartao\"}")
 [ "$status" = "201" ] || erro "POST /gastos devolveu $status, esperava 201: $(head -c 500 "$tmp/corpo")"
-jq -e '.grupo == "CARTAO" and .categoria.id == "alimentacao" and .valorCentavos == 1' "$tmp/corpo" > /dev/null \
+jq -e --arg cartao "$cartao" '.grupo == "CARTAO" and .categoria.id == "alimentacao" and .valorCentavos == 1 and .cartao.id == $cartao and (.mesReferencia | test("^[0-9]{4}-[0-9]{2}$"))' "$tmp/corpo" > /dev/null \
   || erro "POST /gastos devolveu um gasto inesperado: $(head -c 500 "$tmp/corpo")"
 gasto=$(jq -r .id "$tmp/corpo")
-echo "POST /gastos: 201, gasto $gasto no grupo CARTAO (ok)"
+fatura=$(jq -r .mesReferencia "$tmp/corpo")
+echo "POST /gastos: 201, gasto $gasto no cartão, fatura de $fatura (ok)"
 
 status=$(get "$API_URL/telas/gasto-form?id=$gasto" "$token")
 [ "$status" = "200" ] || erro "GET /telas/gasto-form?id= devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
@@ -183,24 +201,38 @@ jq -e --arg id "$gasto" '.gasto.id == $id' "$tmp/corpo" > /dev/null \
   || erro "GET /telas/gasto-form não trouxe o gasto $gasto: $(head -c 500 "$tmp/corpo")"
 echo "GET /telas/gasto-form?id=: 200 (ok)"
 
-# 6. Painel (tarefa 9.2): o gasto de teste entra nos totais e nos últimos.
-status=$(get "$API_URL/telas/dashboard?mes=$mes" "$token")
+# 6. Painel (tarefa 9.2): o gasto de teste entra nos totais e nos últimos do
+#    mês da fatura dele.
+status=$(get "$API_URL/telas/dashboard?mes=$fatura" "$token")
 [ "$status" = "200" ] || erro "GET /telas/dashboard devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
-jq -e --arg mes "$mes" --arg id "$gasto" '
+jq -e --arg mes "$fatura" --arg id "$gasto" --arg cartao "$cartao" '
   .mes == $mes and .totalCentavos >= 1
   and ([.totaisPorGrupo[].grupo] == ["CARTAO", "FIXO"])
   and ([.totaisPorGrupo[].totalCentavos] | add) == .totalCentavos
+  and ([.totaisPorCartao[].totalCentavos] | add) == .totalCentavos
+  and any(.totaisPorCartao[]; .cartaoId == $cartao)
   and any(.ultimos[]; .id == $id)
   and all(.pizza | to_entries[] | .value; length == 0 or ([.[].percentualDecimos] | add) == 1000)
 ' "$tmp/corpo" > /dev/null \
   || erro "GET /telas/dashboard devolveu um painel inesperado: $(head -c 800 "$tmp/corpo")"
-echo "GET /telas/dashboard?mes=$mes: 200, com o gasto de teste e percentuais somando 100% (ok)"
+echo "GET /telas/dashboard?mes=$fatura: 200, com o gasto de teste, totais por cartão e percentuais somando 100% (ok)"
+
+# 6b. Cartões: a fatura do mês traz o gasto de teste no cartão.
+status=$(get "$API_URL/telas/cartoes?mes=$fatura" "$token")
+[ "$status" = "200" ] || erro "GET /telas/cartoes devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+jq -e --arg cartao "$cartao" 'any(.cartoes[]; .cartao.id == $cartao and .faturaCentavos >= 1)' "$tmp/corpo" > /dev/null \
+  || erro "GET /telas/cartoes não trouxe a fatura do cartão de teste: $(head -c 500 "$tmp/corpo")"
+echo "GET /telas/cartoes?mes=$fatura: 200, com a fatura do cartão de teste (ok)"
 
 status=$(enviar DELETE "$API_URL/gastos/$gasto" "$token")
 [ "$status" = "204" ] || erro "DELETE /gastos/$gasto devolveu $status, esperava 204: $(head -c 500 "$tmp/corpo")"
 status=$(get "$API_URL/telas/gasto-form?id=$gasto" "$token")
 [ "$status" = "404" ] || erro "o gasto $gasto ainda existe depois do DELETE (status $status)"
 echo "DELETE /gastos/{id}: 204, e o gasto não existe mais (ok)"
+
+status=$(enviar DELETE "$API_URL/cartoes/$cartao" "$token")
+[ "$status" = "204" ] || erro "DELETE /cartoes/$cartao devolveu $status, esperava 204 (o cartão de teste ficou sem gastos): $(head -c 500 "$tmp/corpo")"
+echo "DELETE /cartoes/{id}: 204 (ok)"
 
 # 7. Admin (tarefa 10.2): o usuário de smoke test não está no grupo admin, então
 # a lista de usuários responde 403 somente_admin, do BFF, sem chegar ao

@@ -32,6 +32,15 @@ type fakeGastos struct {
 	resumo    expcontract.ResumoMensalOut
 	mes       string
 	errResumo error
+
+	cartoes       []expcontract.Cartao
+	errCartoes    error
+	cartaoIn      expcontract.CartaoIn
+	arquivado     bool
+	cartao        expcontract.Cartao
+	errCartao     error
+	resumoCartoes expcontract.ResumoCartoesOut
+	hoje          string
 }
 
 func (f *fakeGastos) registrar(op, userID string) {
@@ -49,8 +58,12 @@ func (f *fakeGastos) chamou() string {
 
 // gravado devolve o gasto como o serviço gravaria.
 func gravado(id string, in expcontract.GastoIn) expcontract.Gasto {
-	return expcontract.Gasto{ID: id, ValorCentavos: in.ValorCentavos, Data: in.Data, Grupo: in.Grupo,
-		CategoriaID: in.CategoriaID, Descricao: in.Descricao, Recorrente: in.Recorrente}
+	mes := in.Data[:7]
+	if in.CartaoID != "" {
+		mes = "2026-12" // o serviço calcula a fatura; aqui um valor fixo basta
+	}
+	return expcontract.Gasto{ID: id, ValorCentavos: in.ValorCentavos, Data: in.Data, MesReferencia: mes, Grupo: in.Grupo,
+		CategoriaID: in.CategoriaID, CartaoID: in.CartaoID, Descricao: in.Descricao, Recorrente: in.Recorrente}
 }
 
 func (f *fakeGastos) Criar(_ context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error) {
@@ -104,6 +117,49 @@ func (f *fakeGastos) ResumoMensal(_ context.Context, userID, mes string) (expcon
 	return f.resumo, f.errResumo
 }
 
+func (f *fakeGastos) ListarCartoes(_ context.Context, userID string) ([]expcontract.Cartao, error) {
+	f.registrar("ListarCartoes", userID)
+	if f.cartoes == nil {
+		return []expcontract.Cartao{}, f.errCartoes
+	}
+	return f.cartoes, f.errCartoes
+}
+
+func (f *fakeGastos) CriarCartao(_ context.Context, userID string, in expcontract.CartaoIn) (expcontract.Cartao, error) {
+	f.registrar("CriarCartao", userID)
+	f.cartaoIn = in
+	return f.cartao, f.errCartao
+}
+
+func (f *fakeGastos) AtualizarCartao(_ context.Context, userID, id string, in expcontract.CartaoIn) (expcontract.Cartao, error) {
+	f.registrar("AtualizarCartao", userID)
+	f.id, f.cartaoIn = id, in
+	return f.cartao, f.errCartao
+}
+
+func (f *fakeGastos) ArquivarCartao(_ context.Context, userID, id string, arquivado bool) (expcontract.Cartao, error) {
+	f.registrar("ArquivarCartao", userID)
+	f.id, f.arquivado = id, arquivado
+	return f.cartao, f.errCartao
+}
+
+func (f *fakeGastos) ExcluirCartao(_ context.Context, userID, id string) error {
+	f.registrar("ExcluirCartao", userID)
+	f.id = id
+	return f.errCartao
+}
+
+func (f *fakeGastos) ResumoCartoes(_ context.Context, userID, mes, hoje string) (expcontract.ResumoCartoesOut, error) {
+	f.registrar("ResumoCartoes", userID)
+	f.mes, f.hoje = mes, hoje
+	out := f.resumoCartoes
+	out.Mes = mes
+	if out.Items == nil {
+		out.Items = []expcontract.ResumoCartao{}
+	}
+	return out, f.errCartao
+}
+
 func montarGastos(t *testing.T, cats *fakeCategorias, gastos *fakeGastos) (http.Handler, string) {
 	t.Helper()
 	emissor := authtest.New(t)
@@ -132,12 +188,12 @@ func TestLancarGastoDeCartao(t *testing.T) {
 	cats, gastos := &fakeCategorias{lista: listaPadrao()}, &fakeGastos{}
 	h, tok := montarGastos(t, cats, gastos)
 
-	req, rec := comCorpo(h, http.MethodPost, "/gastos", tok, `{"valorCentavos":4590,"data":"2026-11-03","categoriaId":"alimentacao","descricao":"Almoço"}`)
+	req, rec := comCorpo(h, http.MethodPost, "/gastos", tok, `{"valorCentavos":4590,"data":"2026-11-03","categoriaId":"alimentacao","descricao":"Almoço","cartaoId":"01JC8Z6Q3N4W5X6Y7Z8A9B0CAR"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
 	conforme(t, req, rec)
-	want := expcontract.GastoIn{ValorCentavos: 4590, Data: "2026-11-03", CategoriaID: "alimentacao", Grupo: "CARTAO", Descricao: "Almoço"}
+	want := expcontract.GastoIn{ValorCentavos: 4590, Data: "2026-11-03", CategoriaID: "alimentacao", Grupo: "CARTAO", Descricao: "Almoço", CartaoID: "01JC8Z6Q3N4W5X6Y7Z8A9B0CAR"}
 	if gastos.in != want || gastos.userID != "u-1" || cats.id != "alimentacao" {
 		t.Errorf("in = %+v, user %q, categoria %q", gastos.in, gastos.userID, cats.id)
 	}
@@ -179,8 +235,10 @@ func TestLancarComCategoriaInvalida(t *testing.T) {
 				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 			}
 			conforme(t, req, rec)
-			if gastos.chamou() != "" {
-				t.Errorf("o expenses-service foi chamado: %s", gastos.chamou())
+			// A lista de cartões é lida em paralelo à validação da
+			// categoria; nada é gravado.
+			if c := gastos.chamou(); c != "" && c != "ListarCartoes" {
+				t.Errorf("o expenses-service gravou: %s", c)
 			}
 		})
 	}
@@ -213,7 +271,7 @@ func TestValidacaoDoExpensesService(t *testing.T) {
 	// Cenário "Valor inválido": o 422 do serviço chega com errors[].
 	gastos := &fakeGastos{err: errs.Validation("Dados do gasto inválidos.", errs.FieldError{Field: "valorCentavos", Message: "deve ser maior que zero"})}
 	h, tok := montarGastos(t, &fakeCategorias{lista: listaPadrao()}, gastos)
-	req, rec := comCorpo(h, http.MethodPost, "/gastos", tok, `{"valorCentavos":0,"data":"2026-11-03","categoriaId":"alimentacao"}`)
+	req, rec := comCorpo(h, http.MethodPost, "/gastos", tok, `{"valorCentavos":0,"data":"2026-11-03","categoriaId":"alimentacao","cartaoId":"01JC8Z6Q3N4W5X6Y7Z8A9B0CAR"}`)
 	p := problema(t, rec)
 	if rec.Code != http.StatusUnprocessableEntity || len(p.Errors) != 1 || p.Errors[0].Field != "valorCentavos" {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
@@ -245,7 +303,7 @@ func TestGastoAlheio(t *testing.T) {
 	naoEncontrado := errs.NotFound(expcontract.CodigoNaoEncontrado, "Gasto não encontrado.")
 	id := "20261103-01JC8Z6Q3N4W5X6Y7Z8A9B0C1D"
 	casos := []struct{ method, path, corpo string }{
-		{http.MethodPut, "/gastos/" + id, `{"valorCentavos":1,"data":"2026-11-03","categoriaId":"alimentacao"}`},
+		{http.MethodPut, "/gastos/" + id, `{"valorCentavos":1,"data":"2026-11-03","categoriaId":"alimentacao","cartaoId":"01JC8Z6Q3N4W5X6Y7Z8A9B0CAR"}`},
 		{http.MethodDelete, "/gastos/" + id, ""},
 		{http.MethodGet, "/telas/gasto-form?id=" + id, ""},
 	}
