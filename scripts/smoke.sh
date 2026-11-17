@@ -29,6 +29,10 @@
 #   6b. Cartões (cartoes-credito): o gasto de teste é lançado num cartão de
 #      smoke test (reaproveitado se sobrar de outra execução), GET
 #      /telas/cartoes mostra a fatura dele, e o cartão é excluído no fim.
+#   6c. Parcelamento (parcelamentos-recorrencias): POST /gastos com 2
+#      parcelas no cartão, reenviado com a mesma chave de idempotência (devolve
+#      a mesma 1ª parcela), a 2/2 aparece na lista da fatura seguinte, e
+#      DELETE ?escopo=TODAS apaga as duas.
 #   7. Admin (tarefa 10.2): GET /admin/telas/usuarios com o token de cliente
 #      responde 403 somente_admin (rota publicada e restrita ao grupo admin).
 #
@@ -223,6 +227,29 @@ status=$(get "$API_URL/telas/cartoes?mes=$fatura" "$token")
 jq -e --arg cartao "$cartao" 'any(.cartoes[]; .cartao.id == $cartao and .faturaCentavos >= 1)' "$tmp/corpo" > /dev/null \
   || erro "GET /telas/cartoes não trouxe a fatura do cartão de teste: $(head -c 500 "$tmp/corpo")"
 echo "GET /telas/cartoes?mes=$fatura: 200, com a fatura do cartão de teste (ok)"
+
+# 6c. Parcelamento em 2 vezes, com reenvio idempotente.
+chave="smoke-$(date +%s)-$RANDOM"
+corpo="{\"valorCentavos\":3,\"data\":\"$hoje\",\"categoriaId\":\"alimentacao\",\"descricao\":\"smoke test parcelado\",\"cartaoId\":\"$cartao\",\"parcelamento\":{\"modo\":\"TOTAL\",\"parcelas\":2},\"chaveIdempotencia\":\"$chave\"}"
+status=$(enviar POST "$API_URL/gastos" "$token" "$corpo")
+[ "$status" = "201" ] || erro "POST /gastos parcelado devolveu $status, esperava 201: $(head -c 500 "$tmp/corpo")"
+jq -e '.serie.tipo == "PARCELAMENTO" and .serie.numero == 1 and .serie.total == 2 and .valorCentavos == 2' "$tmp/corpo" > /dev/null \
+  || erro "POST /gastos parcelado não devolveu a 1/2 com o resto da divisão: $(head -c 500 "$tmp/corpo")"
+parcela=$(jq -r .id "$tmp/corpo")
+seguinte=$(date -u -d "$(jq -r .mesReferencia "$tmp/corpo")-01 +1 month" +%Y-%m)
+status=$(enviar POST "$API_URL/gastos" "$token" "$corpo")
+[ "$status" = "201" ] && [ "$(jq -r .id "$tmp/corpo")" = "$parcela" ] \
+  || erro "o reenvio com a mesma chave não devolveu a mesma parcela (status $status): $(head -c 500 "$tmp/corpo")"
+status=$(get "$API_URL/telas/gastos?mes=$seguinte&cartaoId=$cartao" "$token")
+[ "$status" = "200" ] || erro "GET /telas/gastos?mes=$seguinte devolveu $status: $(head -c 500 "$tmp/corpo")"
+jq -e '[.itens[] | select(.serie.numero == 2 and .serie.total == 2)] | length == 1' "$tmp/corpo" > /dev/null \
+  || erro "a parcela 2/2 não está na fatura de $seguinte: $(head -c 500 "$tmp/corpo")"
+status=$(enviar DELETE "$API_URL/gastos/$parcela?escopo=TODAS" "$token")
+[ "$status" = "204" ] || erro "DELETE /gastos/$parcela?escopo=TODAS devolveu $status: $(head -c 500 "$tmp/corpo")"
+status=$(get "$API_URL/telas/gastos?mes=$seguinte&cartaoId=$cartao" "$token")
+jq -e '[.itens[] | select(.serie != null)] | length == 0' "$tmp/corpo" > /dev/null \
+  || erro "sobrou parcela depois do DELETE ?escopo=TODAS: $(head -c 500 "$tmp/corpo")"
+echo "POST /gastos parcelado (idempotente), 2/2 em $seguinte e DELETE ?escopo=TODAS (ok)"
 
 status=$(enviar DELETE "$API_URL/gastos/$gasto" "$token")
 [ "$status" = "204" ] || erro "DELETE /gastos/$gasto devolveu $status, esperava 204: $(head -c 500 "$tmp/corpo")"

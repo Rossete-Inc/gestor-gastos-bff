@@ -14,7 +14,7 @@ O [`openapi.yaml`](openapi.yaml) é a fonte da verdade da API. O frontend gera o
 | `GET /telas/gasto-form?id=` | Formulário de gasto com categorias e cartões ativos; com `id`, traz o gasto para edição |
 | `GET /telas/cartoes?mes=` | Cartões com a fatura do mês, o vencimento e o limite usado e disponível hoje |
 | `GET /cartoes`, `POST /cartoes`, `PUT/PATCH/DELETE /cartoes/{id}` | Listar, cadastrar, editar, arquivar/reativar e excluir cartão |
-| `POST /gastos`, `PUT /gastos/{id}`, `DELETE /gastos/{id}` | Lançar, editar e excluir gasto |
+| `POST /gastos`, `PUT /gastos/{id}`, `DELETE /gastos/{id}` | Lançar (avulso, parcelado ou recorrente, com `chaveIdempotencia`), editar e excluir gasto; num gasto de série, `?escopo=ESTA\|PROXIMAS\|TODAS` |
 | `GET /categorias`, `POST /categorias`, `DELETE /categorias/{id}` | Categorias padrão e personalizadas |
 | `GET /admin/telas/usuarios` | Lista de usuários (admin) |
 | `PATCH /admin/usuarios/{id}`, `DELETE /admin/usuarios/{id}` | Bloquear, reativar, alterar papel e excluir (admin) |
@@ -124,6 +124,7 @@ Regras do BFF nas rotas de admin:
 | `POST /gastos`, `PUT/DELETE /gastos/{id}`, `GET /telas/gastos` | Implementadas (8.3), em `dev` desde a 8.5, junto com o `?id=` do formulário e a checagem de gastos na exclusão de categoria |
 | `GET /telas/dashboard` | Implementada (9.2). O smoke test em `dev` confere o painel com o gasto de teste. Totais por cartão, visão `cartoes` e detalhe das fatias na change `cartoes-credito` (3.2) |
 | `GET /telas/cartoes`, `GET/POST /cartoes`, `PUT/PATCH/DELETE /cartoes/{id}` | Implementadas na change `cartoes-credito` (3.2) |
+| Parcelamento, recorrência e `escopo` em `/gastos` | Change `parcelamentos-recorrencias` (2.1–2.2): o BFF repassa ao expenses-service, que valida e cria as séries |
 | `GET /admin/telas/usuarios`, `PATCH/DELETE /admin/usuarios/{id}` | Implementadas (10.2). Em `dev`, `PATCH` e `DELETE` respondem 400 `operacao_desconhecida` do users-service até a 10.4 dar à Lambda dele o User Pool e o barramento de eventos |
 
 ## Estrutura
@@ -202,6 +203,7 @@ Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COG
 4. `GET /categorias`: 200 com as 12 categorias padrão.
 5. Gastos: `GET /telas/gastos` do mês, `POST /gastos` de R$ 0,01 em Alimentação, `GET /telas/gasto-form?id=` e `DELETE /gastos/{id}` (depois, o formulário responde 404). O gasto de teste não fica na tabela.
 6. Painel: `GET /telas/dashboard` do mês, antes do `DELETE`, com o gasto de teste nos últimos e cada visão da pizza somando 100%.
+6c. Parcelamento: `POST /gastos` em 2 parcelas no cartão de teste, reenviado com a mesma `chaveIdempotencia` (a mesma 1ª parcela volta), a 2/2 na lista da fatura seguinte e `DELETE ?escopo=TODAS`.
 7. Admin: `GET /admin/telas/usuarios` com o token do usuário de smoke test, que é cliente: 403 `somente_admin`.
 
 Os passos 2 e 3 dependem de duas mudanças no infra-base (PR #16). O `ci.yml` roda com `SMOKE_EXIGIR_TOKEN=1`, então a falta delas reprova o smoke test. Sem a variável, os passos são pulados com um aviso:

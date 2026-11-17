@@ -89,7 +89,7 @@ func TestCiclo(t *testing.T) {
 	}
 
 	in := contract.GastoIn{ValorCentavos: 4590, Data: "2026-11-03", CategoriaID: "alimentacao", Grupo: "CARTAO"}
-	g, err := c.Criar(ctx, "u-1", in)
+	g, err := c.Criar(ctx, "u-1", contract.CriarGastoIn{GastoIn: in})
 	if err != nil || g.ID != "g-1" || s.ultimo.Operation != contract.OpCriarGasto || s.ultimo.UserID != "u-1" {
 		t.Fatalf("criar = %+v, %v (%+v)", g, err, s.ultimo)
 	}
@@ -107,7 +107,7 @@ func TestCiclo(t *testing.T) {
 		t.Errorf("lista = %+v", pg)
 	}
 
-	novo, err := c.Atualizar(ctx, "u-1", "g-1", contract.GastoIn{ValorCentavos: 1, Data: "2026-10-31", CategoriaID: "internet", Grupo: "FIXO"})
+	novo, err := c.Atualizar(ctx, "u-1", "g-1", "", contract.GastoIn{ValorCentavos: 1, Data: "2026-10-31", CategoriaID: "internet", Grupo: "FIXO"})
 	if err != nil || novo.ID != "g-2" || novo.Grupo != "FIXO" {
 		t.Fatalf("atualizar = %+v, %v", novo, err)
 	}
@@ -115,7 +115,7 @@ func TestCiclo(t *testing.T) {
 		t.Errorf("payload = %s", s.ultimo.Payload)
 	}
 
-	if err := c.Excluir(ctx, "u-1", "g-2"); err != nil {
+	if err := c.Excluir(ctx, "u-1", "g-2", contract.EscopoTodas); err != nil {
 		t.Fatal(err)
 	}
 	if existe, _ := c.ExisteNaCategoria(ctx, "u-1", "internet"); existe {

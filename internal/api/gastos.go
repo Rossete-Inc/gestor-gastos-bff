@@ -16,10 +16,10 @@ import (
 // GastosService é o que as rotas usam do expenses-service, gastos e cartões
 // (ADR 0009); *gastos.Client o satisfaz.
 type GastosService interface {
-	Criar(ctx context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error)
+	Criar(ctx context.Context, userID string, in expcontract.CriarGastoIn) (expcontract.Gasto, error)
 	Obter(ctx context.Context, userID, id string) (expcontract.Gasto, error)
-	Atualizar(ctx context.Context, userID, id string, in expcontract.GastoIn) (expcontract.Gasto, error)
-	Excluir(ctx context.Context, userID, id string) error
+	Atualizar(ctx context.Context, userID, id, escopo string, in expcontract.GastoIn) (expcontract.Gasto, error)
+	Excluir(ctx context.Context, userID, id, escopo string) error
 	Listar(ctx context.Context, userID string, in expcontract.ListarGastosIn) (expcontract.PaginaGastos, error)
 	ExisteNaCategoria(ctx context.Context, userID, categoriaID string) (bool, error)
 	ResumoMensal(ctx context.Context, userID, mes string) (expcontract.ResumoMensalOut, error)
@@ -68,15 +68,22 @@ func (a *api) rotasDeGastos(mux *http.ServeMux) {
 }
 
 // gastoIn é o corpo do POST e do PUT (GastoIn no openapi). O grupo não vem
-// do cliente: é o da categoria.
+// do cliente: é o da categoria. Parcelamento, recorrência e a chave de
+// idempotência só valem no POST.
 type gastoIn struct {
-	ValorCentavos int64  `json:"valorCentavos"`
-	Data          string `json:"data"`
-	CategoriaID   string `json:"categoriaId"`
-	Descricao     string `json:"descricao"`
-	Recorrente    bool   `json:"recorrente"`
-	CartaoID      string `json:"cartaoId"`
+	ValorCentavos     int64                       `json:"valorCentavos"`
+	Data              string                      `json:"data"`
+	CategoriaID       string                      `json:"categoriaId"`
+	Descricao         string                      `json:"descricao"`
+	Recorrente        bool                        `json:"recorrente"`
+	CartaoID          string                      `json:"cartaoId"`
+	Parcelamento      *expcontract.ParcelamentoIn `json:"parcelamento"`
+	Recorrencia       *expcontract.RecorrenciaIn  `json:"recorrencia"`
+	ChaveIdempotencia string                      `json:"chaveIdempotencia"`
 }
+
+// maxChaveIdempotencia limita a chave de idempotência (um UUID tem 36).
+const maxChaveIdempotencia = 128
 
 // categoriaResumo é o CategoriaResumo do openapi.
 type categoriaResumo struct {
@@ -95,15 +102,16 @@ type cartaoResumo struct {
 // gastoOut é o Gasto do openapi: o gasto com a categoria e o cartão
 // resolvidos.
 type gastoOut struct {
-	ID            string          `json:"id"`
-	ValorCentavos int64           `json:"valorCentavos"`
-	Data          string          `json:"data"`
-	MesReferencia string          `json:"mesReferencia"`
-	Grupo         string          `json:"grupo"`
-	Categoria     categoriaResumo `json:"categoria"`
-	Cartao        *cartaoResumo   `json:"cartao,omitempty"`
-	Descricao     string          `json:"descricao,omitempty"`
-	Recorrente    bool            `json:"recorrente"`
+	ID            string                  `json:"id"`
+	ValorCentavos int64                   `json:"valorCentavos"`
+	Data          string                  `json:"data"`
+	MesReferencia string                  `json:"mesReferencia"`
+	Grupo         string                  `json:"grupo"`
+	Categoria     categoriaResumo         `json:"categoria"`
+	Cartao        *cartaoResumo           `json:"cartao,omitempty"`
+	Descricao     string                  `json:"descricao,omitempty"`
+	Recorrente    bool                    `json:"recorrente"`
+	Serie         *expcontract.SerieGasto `json:"serie,omitempty"`
 }
 
 // Cartão mostrado num gasto cujo cartão não existe mais. A exclusão de cartão
@@ -160,7 +168,7 @@ func comCategoria(g expcontract.Gasto, c categoriaResumo, cartao *cartaoResumo) 
 	}
 	return gastoOut{
 		ID: g.ID, ValorCentavos: g.ValorCentavos, Data: g.Data, MesReferencia: mes, Grupo: g.Grupo,
-		Categoria: c, Cartao: cartao, Descricao: g.Descricao, Recorrente: g.Recorrente,
+		Categoria: c, Cartao: cartao, Descricao: g.Descricao, Recorrente: g.Recorrente, Serie: g.Serie,
 	}
 }
 
@@ -200,11 +208,15 @@ func (a *api) categoriaDoGasto(ctx context.Context, userID, id string) (catcontr
 // lancamento-gastos, "Gasto de cartão sem cartão"); o serviço confere se o
 // cartão existe e está ativo. Devolve o gasto com a categoria e o cartão
 // resolvidos.
-func (a *api) salvarGasto(r *http.Request, w http.ResponseWriter, gravar func(ctx context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error)) (gastoOut, error) {
+func (a *api) salvarGasto(r *http.Request, w http.ResponseWriter, gravar func(ctx context.Context, userID string, in expcontract.GastoIn, corpo gastoIn) (expcontract.Gasto, error)) (gastoOut, error) {
 	c, _ := auth.FromContext(r.Context())
 	var in gastoIn
 	if err := lerJSON(w, r, &in); err != nil {
 		return gastoOut{}, err
+	}
+	if len(in.ChaveIdempotencia) > maxChaveIdempotencia {
+		return gastoOut{}, errs.Validation("Dados do gasto inválidos.",
+			errs.FieldError{Field: "chaveIdempotencia", Message: "deve ter no máximo 128 caracteres"})
 	}
 	var cat catcontract.Categoria
 	var cartoes []expcontract.Cartao
@@ -222,7 +234,7 @@ func (a *api) salvarGasto(r *http.Request, w http.ResponseWriter, gravar func(ct
 	g, err := gravar(r.Context(), c.UserID, expcontract.GastoIn{
 		ValorCentavos: in.ValorCentavos, Data: in.Data, CategoriaID: cat.ID, Grupo: cat.Grupo,
 		Descricao: in.Descricao, Recorrente: in.Recorrente, CartaoID: in.CartaoID,
-	})
+	}, in)
 	if err != nil {
 		return gastoOut{}, err
 	}
@@ -231,7 +243,12 @@ func (a *api) salvarGasto(r *http.Request, w http.ResponseWriter, gravar func(ct
 }
 
 func (a *api) criarGasto(w http.ResponseWriter, r *http.Request) {
-	out, err := a.salvarGasto(r, w, a.deps.Gastos.Criar)
+	out, err := a.salvarGasto(r, w, func(ctx context.Context, userID string, base expcontract.GastoIn, corpo gastoIn) (expcontract.Gasto, error) {
+		return a.deps.Gastos.Criar(ctx, userID, expcontract.CriarGastoIn{
+			GastoIn: base, Parcelamento: corpo.Parcelamento, Recorrencia: corpo.Recorrencia,
+			ChaveIdempotencia: corpo.ChaveIdempotencia,
+		})
+	})
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -245,8 +262,13 @@ func (a *api) atualizarGasto(w http.ResponseWriter, r *http.Request) {
 		a.erro(w, r, err)
 		return
 	}
-	out, err := a.salvarGasto(r, w, func(ctx context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error) {
-		return a.deps.Gastos.Atualizar(ctx, userID, id, in)
+	escopo, err := escopoDaQuery(r)
+	if err != nil {
+		a.erro(w, r, err)
+		return
+	}
+	out, err := a.salvarGasto(r, w, func(ctx context.Context, userID string, in expcontract.GastoIn, _ gastoIn) (expcontract.Gasto, error) {
+		return a.deps.Gastos.Atualizar(ctx, userID, id, escopo, in)
 	})
 	if err != nil {
 		a.erro(w, r, err)
@@ -262,7 +284,12 @@ func (a *api) excluirGasto(w http.ResponseWriter, r *http.Request) {
 		a.erro(w, r, err)
 		return
 	}
-	if err := a.deps.Gastos.Excluir(r.Context(), c.UserID, id); err != nil {
+	escopo, err := escopoDaQuery(r)
+	if err != nil {
+		a.erro(w, r, err)
+		return
+	}
+	if err := a.deps.Gastos.Excluir(r.Context(), c.UserID, id, escopo); err != nil {
 		a.erro(w, r, err)
 		return
 	}
@@ -276,6 +303,21 @@ type telaGastos struct {
 	NextCursor string                         `json:"nextCursor,omitempty"`
 	Categorias catcontract.CategoriasPorGrupo `json:"categorias"`
 	Cartoes    []expcontract.Cartao           `json:"cartoes"`
+}
+
+// escopoDaQuery lê o alcance da edição ou exclusão (?escopo=). Ausente vale
+// para o gasto avulso; num gasto de série o expenses-service responde 422.
+func escopoDaQuery(r *http.Request) (string, error) {
+	q := r.URL.Query()
+	e := q.Get("escopo")
+	if !q.Has("escopo") {
+		return "", nil
+	}
+	switch e {
+	case expcontract.EscopoEsta, expcontract.EscopoProximas, expcontract.EscopoTodas:
+		return e, nil
+	}
+	return "", parametroInvalido("escopo (ESTA, PROXIMAS ou TODAS)")
 }
 
 // parametroInvalido é o 400 de query string malformada.

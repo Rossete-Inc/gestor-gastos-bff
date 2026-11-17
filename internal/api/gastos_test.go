@@ -23,6 +23,9 @@ type fakeGastos struct {
 	userID    string
 	id        string
 	in        expcontract.GastoIn
+	criarIn   expcontract.CriarGastoIn
+	serie     *expcontract.SerieGasto
+	escopo    string
 	listarIn  expcontract.ListarGastosIn
 	pagina    expcontract.PaginaGastos
 	gasto     expcontract.Gasto
@@ -66,13 +69,15 @@ func gravado(id string, in expcontract.GastoIn) expcontract.Gasto {
 		CategoriaID: in.CategoriaID, CartaoID: in.CartaoID, Descricao: in.Descricao, Recorrente: in.Recorrente}
 }
 
-func (f *fakeGastos) Criar(_ context.Context, userID string, in expcontract.GastoIn) (expcontract.Gasto, error) {
+func (f *fakeGastos) Criar(_ context.Context, userID string, in expcontract.CriarGastoIn) (expcontract.Gasto, error) {
 	f.registrar("Criar", userID)
-	f.in = in
+	f.in, f.criarIn = in.GastoIn, in
 	if f.err != nil {
 		return expcontract.Gasto{}, f.err
 	}
-	return gravado("20261103-01JC8Z6Q3N4W5X6Y7Z8A9B0C1D", in), nil
+	g := gravado("20261103-01JC8Z6Q3N4W5X6Y7Z8A9B0C1D", in.GastoIn)
+	g.Serie = f.serie
+	return g, nil
 }
 
 func (f *fakeGastos) Obter(_ context.Context, userID, id string) (expcontract.Gasto, error) {
@@ -81,18 +86,18 @@ func (f *fakeGastos) Obter(_ context.Context, userID, id string) (expcontract.Ga
 	return f.gasto, f.err
 }
 
-func (f *fakeGastos) Atualizar(_ context.Context, userID, id string, in expcontract.GastoIn) (expcontract.Gasto, error) {
+func (f *fakeGastos) Atualizar(_ context.Context, userID, id, escopo string, in expcontract.GastoIn) (expcontract.Gasto, error) {
 	f.registrar("Atualizar", userID)
-	f.id, f.in = id, in
+	f.id, f.in, f.escopo = id, in, escopo
 	if f.err != nil {
 		return expcontract.Gasto{}, f.err
 	}
 	return gravado("20261031-01JC8Z6Q3N4W5X6Y7Z8A9B0C1D", in), nil
 }
 
-func (f *fakeGastos) Excluir(_ context.Context, userID, id string) error {
+func (f *fakeGastos) Excluir(_ context.Context, userID, id, escopo string) error {
 	f.registrar("Excluir", userID)
-	f.id = id
+	f.id, f.escopo = id, escopo
 	return f.err
 }
 
