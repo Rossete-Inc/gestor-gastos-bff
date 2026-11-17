@@ -5,7 +5,6 @@ import (
 	"time"
 
 	expcontract "github.com/Rossete-Inc/gestor-gastos-expenses-service/contract"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/auth"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 )
 
@@ -18,12 +17,12 @@ import (
 var fusoBrasilia = time.FixedZone("BRT", -3*60*60)
 
 func (a *api) rotasDeCartoes(mux *http.ServeMux) {
-	mux.Handle("GET /telas/cartoes", a.autenticado(http.HandlerFunc(a.telaCartoes)))
-	mux.Handle("GET /cartoes", a.autenticado(http.HandlerFunc(a.listarCartoes)))
-	mux.Handle("POST /cartoes", a.autenticado(http.HandlerFunc(a.criarCartao)))
-	mux.Handle("PUT /cartoes/{id}", a.autenticado(http.HandlerFunc(a.atualizarCartao)))
-	mux.Handle("PATCH /cartoes/{id}", a.autenticado(http.HandlerFunc(a.arquivarCartao)))
-	mux.Handle("DELETE /cartoes/{id}", a.autenticado(http.HandlerFunc(a.excluirCartao)))
+	mux.Handle("GET /telas/cartoes", a.naConta(http.HandlerFunc(a.telaCartoes)))
+	mux.Handle("GET /cartoes", a.naConta(http.HandlerFunc(a.listarCartoes)))
+	mux.Handle("POST /cartoes", a.naConta(http.HandlerFunc(a.criarCartao)))
+	mux.Handle("PUT /cartoes/{id}", a.naConta(http.HandlerFunc(a.atualizarCartao)))
+	mux.Handle("PATCH /cartoes/{id}", a.naConta(http.HandlerFunc(a.arquivarCartao)))
+	mux.Handle("DELETE /cartoes/{id}", a.naConta(http.HandlerFunc(a.excluirCartao)))
 }
 
 // hoje é a data de hoje no Brasil, no formato AAAA-MM-DD.
@@ -63,8 +62,8 @@ type listaCartoes struct {
 }
 
 func (a *api) listarCartoes(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
-	cartoes, err := a.deps.Gastos.ListarCartoes(r.Context(), c.UserID)
+	c := contaDe(r.Context())
+	cartoes, err := a.deps.Gastos.ListarCartoes(r.Context(), c.DonoID)
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -73,13 +72,13 @@ func (a *api) listarCartoes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) criarCartao(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	var in cartaoIn
 	if err := lerJSON(w, r, &in); err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	k, err := a.deps.Gastos.CriarCartao(r.Context(), c.UserID, in.contract())
+	k, err := a.deps.Gastos.CriarCartao(r.Context(), c.DonoID, in.contract())
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -88,7 +87,7 @@ func (a *api) criarCartao(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) atualizarCartao(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	id, err := idValido(r.PathValue("id"))
 	if err != nil {
 		a.erro(w, r, err)
@@ -99,7 +98,7 @@ func (a *api) atualizarCartao(w http.ResponseWriter, r *http.Request) {
 		a.erro(w, r, err)
 		return
 	}
-	k, err := a.deps.Gastos.AtualizarCartao(r.Context(), c.UserID, id, in.contract())
+	k, err := a.deps.Gastos.AtualizarCartao(r.Context(), c.DonoID, id, in.contract())
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -108,7 +107,7 @@ func (a *api) atualizarCartao(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) arquivarCartao(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	id, err := idValido(r.PathValue("id"))
 	if err != nil {
 		a.erro(w, r, err)
@@ -123,7 +122,7 @@ func (a *api) arquivarCartao(w http.ResponseWriter, r *http.Request) {
 		a.erro(w, r, errs.BadRequest("corpo_invalido", "Corpo da requisição inválido: informe arquivado."))
 		return
 	}
-	k, err := a.deps.Gastos.ArquivarCartao(r.Context(), c.UserID, id, *in.Arquivado)
+	k, err := a.deps.Gastos.ArquivarCartao(r.Context(), c.DonoID, id, *in.Arquivado)
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -132,13 +131,13 @@ func (a *api) arquivarCartao(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) excluirCartao(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	id, err := idValido(r.PathValue("id"))
 	if err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	if err := a.deps.Gastos.ExcluirCartao(r.Context(), c.UserID, id); err != nil {
+	if err := a.deps.Gastos.ExcluirCartao(r.Context(), c.DonoID, id); err != nil {
 		a.erro(w, r, err)
 		return
 	}
@@ -153,14 +152,14 @@ type telaCartoes struct {
 }
 
 func (a *api) telaCartoes(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	mes := r.URL.Query().Get("mes")
 	if !padraoMes.MatchString(mes) {
 		a.erro(w, r, parametroInvalido("mes (AAAA-MM)"))
 		return
 	}
 	hoje := a.hoje()
-	res, err := a.deps.Gastos.ResumoCartoes(r.Context(), c.UserID, mes, hoje)
+	res, err := a.deps.Gastos.ResumoCartoes(r.Context(), c.DonoID, mes, hoje)
 	if err != nil {
 		a.erro(w, r, err)
 		return

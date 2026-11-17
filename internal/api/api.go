@@ -44,7 +44,12 @@ type Deps struct {
 	// Admin é opcional: sem ele, as rotas /admin/* respondem 501 depois da
 	// checagem do grupo admin.
 	Admin AdminService
-	Log   *slog.Logger
+	// Colaboracao e Identidade são opcionais e andam juntos: sem eles, só a
+	// própria conta vale (X-Conta alheio é 404), as rotas /contas e
+	// /colaboradores respondem 501 e os gastos saem sem a autoria.
+	Colaboracao ColaboracaoService
+	Identidade  Identidade
+	Log         *slog.Logger
 	// Agora é o relógio usado para o "hoje" do usuário (tela de cartões);
 	// nil = time.Now. Os testes fixam a data.
 	Agora func() time.Time
@@ -74,6 +79,15 @@ var rotasFuturas = []string{
 	"GET /admin/telas/usuarios",
 	"PATCH /admin/usuarios/{id}",
 	"DELETE /admin/usuarios/{id}",
+	"GET /contas",
+	"POST /contas/convites/{donoId}/aceitar",
+	"POST /contas/convites/{donoId}/recusar",
+	"DELETE /contas/{donoId}/participacao",
+	"GET /colaboradores",
+	"POST /colaboradores",
+	"PATCH /colaboradores/{userId}",
+	"DELETE /colaboradores/{userId}",
+	"DELETE /colaboradores/convites/{email}",
 }
 
 // New monta o handler da API.
@@ -98,6 +112,12 @@ func New(d Deps) http.Handler {
 		a.rotasDeAdmin(mux)
 		futuras = slices.DeleteFunc(slices.Clone(futuras), func(r string) bool { return slices.Contains(rotasAdmin, r) })
 	}
+	if d.Colaboracao == nil || d.Identidade == nil {
+		a.deps.Colaboracao, a.deps.Identidade = nil, nil
+	} else {
+		a.rotasDeColaboracao(mux)
+		futuras = slices.DeleteFunc(slices.Clone(futuras), func(r string) bool { return slices.Contains(rotasColaboracao, r) })
+	}
 	for _, rota := range futuras {
 		h := a.autenticado(http.HandlerFunc(naoImplementado))
 		if strings.Contains(rota, " /admin/") {
@@ -112,7 +132,10 @@ func New(d Deps) http.Handler {
 	return a.recuperar(a.registrar(a.cors(mux)))
 }
 
-type api struct{ deps Deps }
+type api struct {
+	deps    Deps
+	acessos cacheAcessos
+}
 
 func (a *api) me(w http.ResponseWriter, r *http.Request) {
 	c, _ := auth.FromContext(r.Context())
@@ -186,7 +209,7 @@ func (a *api) cors(next http.Handler) http.Handler {
 		h.Add("Vary", "Origin")
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
-			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, "+CabecalhoConta)
 			h.Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return

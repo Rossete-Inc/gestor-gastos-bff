@@ -35,6 +35,9 @@
 #      DELETE ?escopo=TODAS apaga as duas.
 #   7. Admin (tarefa 10.2): GET /admin/telas/usuarios com o token de cliente
 #      responde 403 somente_admin (rota publicada e restrita ao grupo admin).
+#   8. Colaboradores (colaboradores 4.4): GET /contas traz a própria conta
+#      primeiro, GET /colaboradores responde 200 com o limite de 5, e uma
+#      conta alheia sem acesso (X-Conta) responde 404 conta_nao_encontrada.
 #
 # O passo 2 depende do infra-base (PR #16): fluxo
 # ALLOW_ADMIN_USER_PASSWORD_AUTH no app client e permissões cognito-idp na
@@ -269,3 +272,19 @@ status=$(get "$API_URL/admin/telas/usuarios" "$token")
 jq -e '.code == "somente_admin"' "$tmp/corpo" > /dev/null \
   || erro "GET /admin/telas/usuarios devolveu um 403 inesperado: $(head -c 500 "$tmp/corpo")"
 echo "GET /admin/telas/usuarios com token de cliente: 403 somente_admin (ok)"
+
+# 8. Colaboradores (colaboradores 4.4): exercita GetUser no Cognito e as
+#    operações de colaboração do users-service (GSI2).
+eu=$(get "$API_URL/me" "$token" > /dev/null; jq -r .id "$tmp/corpo")
+status=$(get "$API_URL/contas" "$token")
+[ "$status" = "200" ] || erro "GET /contas devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+jq -e --arg eu "$eu" '.contas[0].donoId == $eu and .contas[0].papel == "DONO" and (.convites | type == "array")' "$tmp/corpo" > /dev/null   || erro "GET /contas devolveu uma tela inesperada: $(head -c 500 "$tmp/corpo")"
+echo "GET /contas: 200, própria conta primeiro (ok)"
+status=$(get "$API_URL/colaboradores" "$token")
+[ "$status" = "200" ] || erro "GET /colaboradores devolveu $status, esperava 200: $(head -c 500 "$tmp/corpo")"
+jq -e '.limite == 5 and (.membros | type == "array")' "$tmp/corpo" > /dev/null   || erro "GET /colaboradores devolveu uma tela inesperada: $(head -c 500 "$tmp/corpo")"
+echo "GET /colaboradores: 200 (ok)"
+status=$(curl -sS -o "$tmp/corpo" -w '%{http_code}' --max-time 30 -H "Authorization: Bearer $token"   -H "X-Conta: conta-sem-acesso-smoke" "$API_URL/cartoes" || true)
+[ "$status" = "404" ] || erro "GET /cartoes numa conta alheia devolveu $status, esperava 404: $(head -c 500 "$tmp/corpo")"
+jq -e '.code == "conta_nao_encontrada"' "$tmp/corpo" > /dev/null   || erro "GET /cartoes numa conta alheia devolveu um 404 inesperado: $(head -c 500 "$tmp/corpo")"
+echo "X-Conta sem acesso: 404 conta_nao_encontrada (ok)"

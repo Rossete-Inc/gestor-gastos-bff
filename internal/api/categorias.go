@@ -10,7 +10,6 @@ import (
 
 	catcontract "github.com/Rossete-Inc/gestor-gastos-categories-service/contract"
 	expcontract "github.com/Rossete-Inc/gestor-gastos-expenses-service/contract"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/auth"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 )
 
@@ -40,15 +39,15 @@ const maxCorpo = 16 << 10
 const maxID = 64
 
 func (a *api) rotasDeCategorias(mux *http.ServeMux) {
-	mux.Handle("GET /categorias", a.autenticado(http.HandlerFunc(a.listarCategorias)))
-	mux.Handle("POST /categorias", a.autenticado(http.HandlerFunc(a.criarCategoria)))
-	mux.Handle("DELETE /categorias/{id}", a.autenticado(http.HandlerFunc(a.excluirCategoria)))
-	mux.Handle("GET /telas/gasto-form", a.autenticado(http.HandlerFunc(a.telaGastoForm)))
+	mux.Handle("GET /categorias", a.naConta(http.HandlerFunc(a.listarCategorias)))
+	mux.Handle("POST /categorias", a.naConta(http.HandlerFunc(a.criarCategoria)))
+	mux.Handle("DELETE /categorias/{id}", a.naConta(http.HandlerFunc(a.excluirCategoria)))
+	mux.Handle("GET /telas/gasto-form", a.naConta(http.HandlerFunc(a.telaGastoForm)))
 }
 
 func (a *api) listarCategorias(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
-	out, err := a.deps.Categorias.Listar(r.Context(), c.UserID)
+	c := contaDe(r.Context())
+	out, err := a.deps.Categorias.Listar(r.Context(), c.DonoID)
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -66,13 +65,13 @@ type categoriaIn struct {
 }
 
 func (a *api) criarCategoria(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	var in categoriaIn
 	if err := lerJSON(w, r, &in); err != nil {
 		a.erro(w, r, err)
 		return
 	}
-	out, err := a.deps.Categorias.Criar(r.Context(), c.UserID, catcontract.CriarCategoriaIn(in))
+	out, err := a.deps.Categorias.Criar(r.Context(), c.DonoID, catcontract.CriarCategoriaIn(in))
 	if err != nil {
 		a.erro(w, r, err)
 		return
@@ -81,7 +80,7 @@ func (a *api) criarCategoria(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	id, err := idValido(r.PathValue("id"))
 	if err != nil {
 		a.erro(w, r, err)
@@ -91,7 +90,7 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 	// com gastos não é excluída. A corrida entre a checagem e a exclusão é
 	// aceita no MVP; o gasto órfão aparece com a categoria "Removida".
 	if a.deps.Gastos != nil {
-		emUso, err := a.deps.Gastos.ExisteNaCategoria(r.Context(), c.UserID, id)
+		emUso, err := a.deps.Gastos.ExisteNaCategoria(r.Context(), c.DonoID, id)
 		if err != nil {
 			a.erro(w, r, err)
 			return
@@ -101,7 +100,7 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := a.deps.Categorias.Excluir(r.Context(), c.UserID, id); err != nil {
+	if err := a.deps.Categorias.Excluir(r.Context(), c.DonoID, id); err != nil {
 		a.erro(w, r, err)
 		return
 	}
@@ -114,7 +113,7 @@ func (a *api) excluirCategoria(w http.ResponseWriter, r *http.Request) {
 // Sem o expenses-service (Lambda antes da tarefa 8.5), a lista de cartões
 // vem vazia e o modo de edição responde 501.
 func (a *api) telaGastoForm(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	q := r.URL.Query()
 	var id string
 	if q.Has("id") {
@@ -132,13 +131,13 @@ func (a *api) telaGastoForm(w http.ResponseWriter, r *http.Request) {
 	var cartoes []expcontract.Cartao
 	var g expcontract.Gasto
 	tarefas := []func() error{
-		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.UserID); return err },
+		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.DonoID); return err },
 	}
 	if a.deps.Gastos != nil {
-		tarefas = append(tarefas, func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.UserID); return err })
+		tarefas = append(tarefas, func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.DonoID); return err })
 	}
 	if id != "" {
-		tarefas = append(tarefas, func() (err error) { g, err = a.deps.Gastos.Obter(r.Context(), c.UserID, id); return err })
+		tarefas = append(tarefas, func() (err error) { g, err = a.deps.Gastos.Obter(r.Context(), c.DonoID, id); return err })
 	}
 	if err := emParalelo(tarefas...); err != nil {
 		a.erro(w, r, err)

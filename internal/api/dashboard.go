@@ -9,7 +9,6 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-bff/internal/painel"
 	catcontract "github.com/Rossete-Inc/gestor-gastos-categories-service/contract"
 	expcontract "github.com/Rossete-Inc/gestor-gastos-expenses-service/contract"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/auth"
 )
 
 // rotuloGrupo é o nome das fatias da visão por grupo, o mesmo que o app usa
@@ -75,7 +74,7 @@ type telaDashboard struct {
 }
 
 func (a *api) telaDashboard(w http.ResponseWriter, r *http.Request) {
-	c, _ := auth.FromContext(r.Context())
+	c := contaDe(r.Context())
 	mes := r.URL.Query().Get("mes")
 	if !padraoMes.MatchString(mes) {
 		a.erro(w, r, parametroInvalido("mes (AAAA-MM)"))
@@ -85,9 +84,9 @@ func (a *api) telaDashboard(w http.ResponseWriter, r *http.Request) {
 	var cats catcontract.CategoriasPorGrupo
 	var cartoes []expcontract.Cartao
 	err := emParalelo(
-		func() (err error) { res, err = a.deps.Gastos.ResumoMensal(r.Context(), c.UserID, mes); return err },
-		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.UserID); return err },
-		func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.UserID); return err },
+		func() (err error) { res, err = a.deps.Gastos.ResumoMensal(r.Context(), c.DonoID, mes); return err },
+		func() (err error) { cats, err = a.deps.Categorias.Listar(r.Context(), c.DonoID); return err },
+		func() (err error) { cartoes, err = a.deps.Gastos.ListarCartoes(r.Context(), c.DonoID); return err },
 	)
 	if err != nil {
 		a.erro(w, r, err)
