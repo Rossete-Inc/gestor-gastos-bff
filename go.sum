@@ -1,11 +1,11 @@
 github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44 h1:UOGGq4/Ecr+Uy28x4BVJAZHFx2Ci1pSKf9GqpwsOyMg=
 github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44/go.mod h1:+oLNXGCBmxYZOMSIIC3YImKa3OfdrKLxJ1Tb+8TC1Aw=
-github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117140318-96f34d8db1b1 h1:wfz+3ReYrGlMFfQXvXPwOub9fc8AfD8LGsDTQhMoGWk=
-github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117140318-96f34d8db1b1/go.mod h1:O7EDAc+W7W839HA5XdnWn+VP99juQW5V8Esd4lp2wv0=
+github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117170514-4441839d8896 h1:NOyZsDZyckBuRfeZKBLE0PtNltnOlzH3Azv6upBXn5M=
+github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117170514-4441839d8896/go.mod h1:O7EDAc+W7W839HA5XdnWn+VP99juQW5V8Esd4lp2wv0=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1 h1:LV8IIkQ057DTMXIODw77NXRHuwdxOds+Vp2Ih62n1n4=
 github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1/go.mod h1:x9KPx4MElC0yaUpzF//YmwaFPEjJAE9uxlMDYnffqqA=
-github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f h1:KnSKakWSIXaptGLINwRKhVgAciNYoHLcX9So+qQATk0=
-github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f/go.mod h1:qL3cQEySSrEeGlFLAKSiehlakJhJF1ZoXYdjfA2IPLo=
+github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261117170143-02d1187a8414 h1:g+IF9Hq8OegKK38D/8qAEhkQP4n1CbWNfEwIkN6B9ZU=
+github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261117170143-02d1187a8414/go.mod h1:qL3cQEySSrEeGlFLAKSiehlakJhJF1ZoXYdjfA2IPLo=
 github.com/aws/aws-lambda-go v1.55.1 h1:We2cCp4BwqqH/JW+bEEo1FhgG71rslvjfi4y7KmlrR0=
 github.com/aws/aws-lambda-go v1.55.1/go.mod h1:V+NzkHNR6vBC8C1PDloqSLE+7jYWFiPvJJFiCiTm8nE=
 github.com/aws/aws-sdk-go-v2 v1.48.0 h1:tFU7EJVm7MfyaXLsXdYTZ0Vd6vwt9OljCyqq0gqk0Mc=

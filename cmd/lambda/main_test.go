@@ -124,6 +124,16 @@ func (f *fakeAWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: lista})
 		return
 	}
+	if req.Operation == contract.OpListarColaboradores {
+		lista, _ := json.Marshal(contract.Colaboradores{Membros: []contract.Colaborador{}, Convites: []contract.Convite{}})
+		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: lista})
+		return
+	}
+	if req.Operation == contract.OpNomesDe {
+		nomes, _ := json.Marshal(contract.Nomes{Nomes: map[string]string{req.UserID: "Ana"}})
+		_ = json.NewEncoder(w).Encode(invoke.Response{Payload: nomes})
+		return
+	}
 	if req.Operation != contract.OpObterPerfil {
 		http.Error(w, "operação inesperada: "+req.Operation, http.StatusBadRequest)
 		return
@@ -242,9 +252,13 @@ func TestGastosInvocaOExpensesServicePorLambda(t *testing.T) {
 	if !strings.Contains(out.Body, `"categoria":{"id":"alimentacao","nome":"Alimentação","cor":"#F97316"}`) {
 		t.Errorf("corpo = %s", out.Body)
 	}
+	if !strings.Contains(out.Body, `"lancadoPor":{"id":"user-1","nome":"Ana"}`) {
+		t.Errorf("autoria: corpo = %s", out.Body)
+	}
 	invocadas := strings.Join(fake.funcoes, ",")
-	// Gastos e cartões no expenses-service, categorias no categories-service.
-	if len(fake.funcoes) != 3 || !strings.Contains(invocadas, expensesArn) || !strings.Contains(invocadas, categoriesArn) {
+	// Gastos e cartões no expenses-service, categorias no categories-service,
+	// membros e nomes dos autores no users-service.
+	if len(fake.funcoes) != 5 || !strings.Contains(invocadas, expensesArn) || !strings.Contains(invocadas, categoriesArn) || !strings.Contains(invocadas, usersArn) {
 		t.Errorf("funções invocadas = %v", fake.funcoes)
 	}
 }

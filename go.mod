@@ -4,9 +4,9 @@ go 1.27.0
 
 require (
 	github.com/Rossete-Inc/gestor-gastos-categories-service v0.0.0-20261110160448-cbd7c876fa44
-	github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117140318-96f34d8db1b1
+	github.com/Rossete-Inc/gestor-gastos-expenses-service v0.0.0-20261117170514-4441839d8896
 	github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.1
-	github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261112103200-8d54df65120f
+	github.com/Rossete-Inc/gestor-gastos-users-service v0.0.0-20261117170143-02d1187a8414
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.18

@@ -107,13 +107,16 @@ func NewHandler(c Config, awsCfg aws.Config) (http.Handler, error) {
 
 	// CORS é feito pela HTTP API (infra-base), por isso sem CORSOrigins aqui.
 	users := usuarios.New(transporte)
+	identidade := cognito.New(cip.NewFromConfig(awsCfg))
 	return api.New(api.Deps{
-		Tokens:     tokens,
-		Me:         me.New(users, cognito.New(cip.NewFromConfig(awsCfg))),
-		Categorias: categorias.New(transporteCategorias),
-		Gastos:     gastos.New(transporteGastos),
-		Admin:      users,
-		Log:        log,
+		Tokens:      tokens,
+		Me:          me.New(users, identidade),
+		Categorias:  categorias.New(transporteCategorias),
+		Gastos:      gastos.New(transporteGastos),
+		Admin:       users,
+		Colaboracao: users,
+		Identidade:  identidade,
+		Log:         log,
 	}), nil
 }
 

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Gestor de Gastos — BFF
-  version: 0.3.0
+  version: 0.4.0
   description: |
     API do BFF do Gestor de Gastos. É a única API pública: o front chama só
     ela, e ela delega aos serviços por Lambda Invoke (ADR 0004).
@@ -24,6 +24,13 @@ info:
       nos 422, `errors[]` por campo.
     - **Isolamento:** o usuário é sempre o do token. Recurso de outro usuário
       responde 404, como se não existisse.
+    - **Conta ativa (colaboradores):** as rotas de gastos, cartões,
+      categorias e telas aceitam o cabeçalho `X-Conta` com o `donoId` da
+      conta em que o usuário colabora. Sem ele, ou com o próprio ID, vale a
+      própria conta. Conta sem acesso responde 404 `conta_nao_encontrada`;
+      escrita de um colaborador `LEITOR` responde 403 `somente_leitura`. As
+      rotas `/colaboradores` são só do dono: com `X-Conta` alheio, 403
+      `somente_dono`.
   contact:
     name: Gestor de Gastos
     url: https://github.com/Rossete-Inc/gestor-gastos-bff
@@ -51,6 +58,8 @@ tags:
     description: Cartões de crédito, faturas e limite
   - name: admin
     description: Gestão de usuários (somente admin)
+  - name: colaboracao
+    description: Contas compartilhadas, convites e colaboradores
 
 paths:
   /me:
@@ -72,6 +81,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   /telas/dashboard:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [telas]
       operationId: obterTelaDashboard
@@ -92,9 +103,12 @@ paths:
               schema: { $ref: "#/components/schemas/TelaDashboard" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /telas/gastos:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [telas]
       operationId: obterTelaGastos
@@ -119,6 +133,11 @@ paths:
           required: false
           description: ID do cartão, ou `SEM_CARTAO` para os gastos sem cartão.
           schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: autorId
+          in: query
+          required: false
+          description: Só os gastos lançados por esta pessoa; o dono inclui os gastos anteriores aos colaboradores.
+          schema: { type: string, minLength: 1, maxLength: 64 }
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
       responses:
@@ -129,9 +148,12 @@ paths:
               schema: { $ref: "#/components/schemas/TelaGastos" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /telas/gasto-form:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [telas]
       operationId: obterTelaGastoForm
@@ -157,6 +179,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   /gastos:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     post:
       tags: [gastos]
       operationId: criarGasto
@@ -184,11 +208,14 @@ paths:
               schema: { $ref: "#/components/schemas/Gasto" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /gastos/{id}:
     parameters:
+      - $ref: "#/components/parameters/XConta"
       - $ref: "#/components/parameters/IdPath"
     put:
       tags: [gastos]
@@ -218,6 +245,7 @@ paths:
               schema: { $ref: "#/components/schemas/Gasto" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -234,11 +262,14 @@ paths:
         "204": { description: Gasto excluído }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /categorias:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [categorias]
       operationId: listarCategorias
@@ -251,6 +282,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CategoriasPorGrupo" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       tags: [categorias]
@@ -269,6 +301,8 @@ paths:
               schema: { $ref: "#/components/schemas/Categoria" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: |
             Já existe categoria visível com o mesmo nome no grupo, ignorando
@@ -281,6 +315,7 @@ paths:
 
   /categorias/{id}:
     parameters:
+      - $ref: "#/components/parameters/XConta"
       - $ref: "#/components/parameters/IdPath"
     delete:
       tags: [categorias]
@@ -303,6 +338,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   /telas/cartoes:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [telas]
       operationId: obterTelaCartoes
@@ -321,9 +358,12 @@ paths:
               schema: { $ref: "#/components/schemas/TelaCartoes" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /cartoes:
+    parameters:
+      - $ref: "#/components/parameters/XConta"
     get:
       tags: [cartoes]
       operationId: listarCartoes
@@ -336,6 +376,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ListaCartoes" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       tags: [cartoes]
@@ -355,6 +396,8 @@ paths:
               schema: { $ref: "#/components/schemas/Cartao" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: "Já há 20 cartões ativos (`code`: `limite_cartoes`)."
           content:
@@ -365,6 +408,7 @@ paths:
 
   /cartoes/{id}:
     parameters:
+      - $ref: "#/components/parameters/XConta"
       - $ref: "#/components/parameters/IdPath"
     put:
       tags: [cartoes]
@@ -384,6 +428,7 @@ paths:
               schema: { $ref: "#/components/schemas/Cartao" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -405,6 +450,7 @@ paths:
               schema: { $ref: "#/components/schemas/Cartao" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: "Reativar com 20 cartões ativos (`code`: `limite_cartoes`)."
@@ -420,6 +466,7 @@ paths:
       responses:
         "204": { description: Cartão excluído }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: "Há gastos no cartão; arquive-o (`code`: `cartao_em_uso`)."
@@ -504,6 +551,172 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "500": { $ref: "#/components/responses/InternalError" }
 
+  /contas:
+    get:
+      tags: [colaboracao]
+      operationId: obterContas
+      summary: Contas do usuário e convites recebidos
+      description: |
+        A própria conta (papel `DONO`) primeiro, depois as contas em que o
+        usuário colabora, e os convites pendentes para o e-mail verificado do
+        token. Base do seletor de conta e do aviso de convites.
+      responses:
+        "200":
+          description: Contas e convites
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaContas" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /contas/convites/{donoId}/aceitar:
+    parameters:
+      - $ref: "#/components/parameters/DonoIdPath"
+    post:
+      tags: [colaboracao]
+      operationId: aceitarConvite
+      summary: Aceitar convite
+      description: Vale só para o e-mail verificado do token; convite de outro e-mail responde 404.
+      responses:
+        "200":
+          description: Conta em que o usuário passou a colaborar
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /contas/convites/{donoId}/recusar:
+    parameters:
+      - $ref: "#/components/parameters/DonoIdPath"
+    post:
+      tags: [colaboracao]
+      operationId: recusarConvite
+      summary: Recusar convite
+      description: Apaga o convite e libera a vaga.
+      responses:
+        "204": { description: Convite recusado }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /contas/{donoId}/participacao:
+    parameters:
+      - $ref: "#/components/parameters/DonoIdPath"
+    delete:
+      tags: [colaboracao]
+      operationId: sairDaConta
+      summary: Sair de uma conta
+      description: O colaborador deixa a conta; os gastos que lançou continuam nela.
+      responses:
+        "204": { description: Saiu da conta }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /colaboradores:
+    get:
+      tags: [colaboracao]
+      operationId: listarColaboradores
+      summary: Colaboradores da própria conta (dono)
+      description: Membros e convites pendentes, que juntos somam até `limite`.
+      responses:
+        "200":
+          description: Colaboradores
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelaColaboradores" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [colaboracao]
+      operationId: convidar
+      summary: Convidar colaborador (dono)
+      description: |
+        O e-mail é comparado em minúsculas e sem espaços nas pontas. Não se
+        convida o próprio e-mail. Nenhum e-mail de notificação é enviado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConviteIn" }
+      responses:
+        "201":
+          description: Convite pendente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConviteEnviado" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`code`: `ja_colaborador`, `convite_existente` ou `limite_colaboradores`."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /colaboradores/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    patch:
+      tags: [colaboracao]
+      operationId: mudarPapel
+      summary: Mudar o papel de um colaborador (dono)
+      description: Vale na próxima requisição do colaborador, em até 10 segundos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PapelIn" }
+      responses:
+        "200":
+          description: Colaborador atualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Colaborador" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [colaboracao]
+      operationId: removerColaborador
+      summary: Remover colaborador (dono)
+      description: O acesso termina em até 10 segundos; os gastos que ele lançou continuam na conta.
+      responses:
+        "204": { description: Colaborador removido }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /colaboradores/convites/{email}:
+    parameters:
+      - name: email
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 254 }
+    delete:
+      tags: [colaboracao]
+      operationId: cancelarConvite
+      summary: Cancelar convite (dono)
+      responses:
+        "204": { description: Convite cancelado }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
 components:
   securitySchemes:
     cognito:
@@ -540,6 +753,22 @@ components:
         fica ajustado), `PROXIMAS` (este e os seguintes) ou `TODAS`.
         Obrigatório num gasto de série; ignorado no gasto avulso.
       schema: { type: string, enum: [ESTA, PROXIMAS, TODAS] }
+    XConta:
+      name: X-Conta
+      in: header
+      required: false
+      description: "`donoId` da conta ativa; ausente = a própria conta."
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    DonoIdPath:
+      name: donoId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
     IdPath:
       name: id
       in: path
@@ -558,12 +787,15 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
     Forbidden:
-      description: O usuário não tem o papel `admin`
+      description: |
+        Sem permissão: rota `/admin/*` sem o papel `admin`, escrita de um
+        colaborador `LEITOR` (`somente_leitura`) ou gestão de colaboradores
+        fora da própria conta (`somente_dono`).
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
     NotFound:
-      description: Recurso inexistente ou de outro usuário
+      description: Recurso inexistente, de outro usuário, ou conta ativa sem acesso (`conta_nao_encontrada`)
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -790,6 +1022,20 @@ components:
         descricao: { type: string }
         recorrente: { type: boolean }
         serie: { $ref: "#/components/schemas/SerieGasto" }
+        lancadoPor:
+          allOf: [{ $ref: "#/components/schemas/Pessoa" }]
+          description: Quem lançou; os gastos anteriores aos colaboradores são do dono. Só na lista de gastos e na resposta do POST e do PUT.
+        editadoPor:
+          allOf: [{ $ref: "#/components/schemas/Pessoa" }]
+          description: Quem editou por último; ausente se nunca foi editado depois dos colaboradores.
+
+    Pessoa:
+      type: object
+      description: Autor de gasto ou membro da conta. Autor sem perfil aparece como "Ex-colaborador".
+      required: [id, nome]
+      properties:
+        id: { type: string }
+        nome: { type: string }
 
     TelaGastos:
       type: object
@@ -805,6 +1051,10 @@ components:
           type: array
           description: Todos os cartões, ativos e arquivados, para o filtro.
           items: { $ref: "#/components/schemas/Cartao" }
+        pessoas:
+          type: array
+          description: O dono e os membros da conta, para o filtro por pessoa.
+          items: { $ref: "#/components/schemas/Pessoa" }
 
     TelaGastoForm:
       type: object
@@ -991,3 +1241,88 @@ components:
           type: array
           description: Na ordem de apelido; ativos e arquivados.
           items: { $ref: "#/components/schemas/ResumoCartao" }
+
+    PapelConta:
+      type: string
+      enum: [DONO, EDITOR, LEITOR]
+      description: "`EDITOR` faz tudo o que o dono faz com gastos, cartões e categorias; `LEITOR` só consulta."
+
+    PapelColaborador:
+      type: string
+      enum: [EDITOR, LEITOR]
+
+    Conta:
+      type: object
+      required: [donoId, nomeDono, papel]
+      properties:
+        donoId: { type: string, description: Valor para o cabeçalho `X-Conta`. }
+        nomeDono: { type: string, example: Ana }
+        papel: { $ref: "#/components/schemas/PapelConta" }
+
+    ConviteRecebido:
+      type: object
+      required: [donoId, nomeDono, papel, criadoEm]
+      properties:
+        donoId: { type: string }
+        nomeDono: { type: string }
+        papel: { $ref: "#/components/schemas/PapelColaborador" }
+        criadoEm: { type: string, format: date-time }
+
+    TelaContas:
+      type: object
+      required: [contas, convites]
+      properties:
+        contas:
+          type: array
+          description: A própria conta primeiro, depois as contas em que o usuário colabora.
+          minItems: 1
+          items: { $ref: "#/components/schemas/Conta" }
+        convites:
+          type: array
+          items: { $ref: "#/components/schemas/ConviteRecebido" }
+
+    Colaborador:
+      type: object
+      required: [userId, nome, email, papel, desde]
+      properties:
+        userId: { type: string }
+        nome: { type: string }
+        email: { type: string }
+        papel: { $ref: "#/components/schemas/PapelColaborador" }
+        desde: { type: string, format: date-time }
+
+    ConviteEnviado:
+      type: object
+      required: [email, papel, criadoEm]
+      properties:
+        email: { type: string }
+        papel: { $ref: "#/components/schemas/PapelColaborador" }
+        criadoEm: { type: string, format: date-time }
+
+    TelaColaboradores:
+      type: object
+      required: [membros, convites, limite]
+      properties:
+        membros:
+          type: array
+          items: { $ref: "#/components/schemas/Colaborador" }
+        convites:
+          type: array
+          description: Convites pendentes, que também ocupam vaga.
+          items: { $ref: "#/components/schemas/ConviteEnviado" }
+        limite: { type: integer, format: int32, example: 5, description: Máximo de membros mais convites. }
+
+    ConviteIn:
+      type: object
+      required: [email, papel]
+      additionalProperties: false
+      properties:
+        email: { type: string, minLength: 1, maxLength: 254, example: bruno@x.com }
+        papel: { $ref: "#/components/schemas/PapelColaborador" }
+
+    PapelIn:
+      type: object
+      required: [papel]
+      additionalProperties: false
+      properties:
+        papel: { $ref: "#/components/schemas/PapelColaborador" }

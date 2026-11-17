@@ -130,12 +130,15 @@ func NewHandler(c Config) (http.Handler, error) {
 	})
 
 	users := usuarios.New(transporte)
+	identidade := cognito.New(cognitoAPI)
 	return api.New(api.Deps{
 		Tokens:      tokens,
-		Me:          me.New(users, cognito.New(cognitoAPI)),
+		Me:          me.New(users, identidade),
 		Categorias:  categorias.New(transporteCategorias),
 		Gastos:      gastos.New(transporteGastos),
 		Admin:       users,
+		Colaboracao: users,
+		Identidade:  identidade,
 		Log:         log,
 		CORSOrigins: c.CORSOrigins,
 	}), nil

@@ -114,4 +114,13 @@ var Rotas = []string{
 	"GET /admin/telas/usuarios",
 	"PATCH /admin/usuarios/{id}",
 	"DELETE /admin/usuarios/{id}",
+	"GET /contas",
+	"POST /contas/convites/{donoId}/aceitar",
+	"POST /contas/convites/{donoId}/recusar",
+	"DELETE /contas/{donoId}/participacao",
+	"GET /colaboradores",
+	"POST /colaboradores",
+	"PATCH /colaboradores/{userId}",
+	"DELETE /colaboradores/{userId}",
+	"DELETE /colaboradores/convites/{email}",
 }

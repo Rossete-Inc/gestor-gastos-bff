@@ -198,7 +198,7 @@ func TestLancarGastoDeCartao(t *testing.T) {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
 	conforme(t, req, rec)
-	want := expcontract.GastoIn{ValorCentavos: 4590, Data: "2026-11-03", CategoriaID: "alimentacao", Grupo: "CARTAO", Descricao: "Almoço", CartaoID: "01JC8Z6Q3N4W5X6Y7Z8A9B0CAR"}
+	want := expcontract.GastoIn{ValorCentavos: 4590, Data: "2026-11-03", CategoriaID: "alimentacao", Grupo: "CARTAO", Descricao: "Almoço", CartaoID: "01JC8Z6Q3N4W5X6Y7Z8A9B0CAR", AutorID: "u-1"}
 	if gastos.in != want || gastos.userID != "u-1" || cats.id != "alimentacao" {
 		t.Errorf("in = %+v, user %q, categoria %q", gastos.in, gastos.userID, cats.id)
 	}

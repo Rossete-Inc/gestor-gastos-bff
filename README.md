@@ -18,6 +18,9 @@ O [`openapi.yaml`](openapi.yaml) é a fonte da verdade da API. O frontend gera o
 | `GET /categorias`, `POST /categorias`, `DELETE /categorias/{id}` | Categorias padrão e personalizadas |
 | `GET /admin/telas/usuarios` | Lista de usuários (admin) |
 | `PATCH /admin/usuarios/{id}`, `DELETE /admin/usuarios/{id}` | Bloquear, reativar, alterar papel e excluir (admin) |
+| `GET /contas` | Seletor de conta: a própria conta, as contas em que o usuário colabora e os convites recebidos |
+| `POST /contas/convites/{donoId}/aceitar`, `.../recusar`, `DELETE /contas/{donoId}/participacao` | Aceitar ou recusar um convite e sair de uma conta |
+| `GET/POST /colaboradores`, `PATCH/DELETE /colaboradores/{userId}`, `DELETE /colaboradores/convites/{email}` | Gestão pelo dono: listar, convidar, mudar papel, remover e cancelar convite |
 
 Convenções (detalhes no `info.description` do contrato):
 
@@ -26,6 +29,7 @@ Convenções (detalhes no `info.description` do contrato):
 - **Datas:** `AAAA-MM-DD`; mês `AAAA-MM`.
 - **Paginação:** por cursor opaco.
 - **Erros:** `application/problem+json`, com `code` estável e `errors[]` nos 422.
+- **Conta ativa:** cabeçalho `X-Conta` com o `donoId` (colaboradores, abaixo).
 
 ## Rodar localmente
 
@@ -115,6 +119,16 @@ Regras do BFF nas rotas de admin:
 - **Corpo do `PATCH`:** o BFF só confere o formato do JSON (campos fora de `status` e `papel` respondem 400 `corpo_invalido`). Valor fora do enum ou corpo sem campo nenhum voltam 422 do users-service.
 - **Lista:** o users-service devolve `items`; a tela devolve `itens`, como as outras telas. `limit` fora de 1 a 100 responde 400 `parametro_invalido`, e o conteúdo do cursor é conferido pelo users-service (400 `cursor_invalido`).
 
+Regras do BFF na conta compartilhada (change `colaboradores`, ADR 0010):
+
+- **Conta ativa:** as rotas de gastos, cartões, categorias e telas leem o cabeçalho `X-Conta`. Sem ele, ou com o próprio `sub`, vale a própria conta. Numa conta alheia, o BFF chama `ObterAcesso` no users-service: sem acesso é 404 `conta_nao_encontrada`, e um `LEITOR` que tenta escrever recebe 403 `somente_leitura` antes de qualquer serviço ser chamado.
+- **Partição:** com o acesso confirmado, o expenses-service e o categories-service recebem o `userId` do dono. Os serviços não sabem de colaboradores.
+- **Cache:** o acesso confirmado fica 10 s em memória na Lambda, por (usuário, dono). Quem não tem acesso sempre consulta. Sair da conta, mudar o papel e remover um colaborador limpam o cache da instância que atendeu; nas demais, valem em até 10 s.
+- **Gestão:** as rotas `/colaboradores` usam sempre a própria conta; com `X-Conta` alheio respondem 403 `somente_dono`. Limite, e-mail normalizado e convite repetido são regras do users-service, que devolve 409 ou 422.
+- **Convite:** aceitar, recusar e listar os convites usam o e-mail do token, lido no Cognito (`GetUser`), nunca um e-mail do corpo.
+- **Autoria:** o lançamento e a edição mandam `autorId` (o `sub`) ao expenses-service. A lista de gastos e a resposta do `POST`/`PUT` trazem `lancadoPor` e `editadoPor`, com os nomes resolvidos em lote (`NomesDe`); gasto sem autor gravado é do dono, e autor sem perfil aparece como "Ex-colaborador". `/telas/gastos` aceita `autorId` e traz `pessoas` (o dono e os membros) para o filtro.
+- **`/me`:** continua só com o perfil. Contas e convites vêm de `GET /contas`, para o `/me` não pagar a chamada ao Cognito a cada abertura do app.
+
 ## Estado das rotas
 
 | Rota | Estado |
@@ -125,13 +139,14 @@ Regras do BFF nas rotas de admin:
 | `GET /telas/dashboard` | Implementada (9.2). O smoke test em `dev` confere o painel com o gasto de teste. Totais por cartão, visão `cartoes` e detalhe das fatias na change `cartoes-credito` (3.2) |
 | `GET /telas/cartoes`, `GET/POST /cartoes`, `PUT/PATCH/DELETE /cartoes/{id}` | Implementadas na change `cartoes-credito` (3.2) |
 | Parcelamento, recorrência e `escopo` em `/gastos` | Change `parcelamentos-recorrencias` (2.1–2.2): o BFF repassa ao expenses-service, que valida e cria as séries |
+| `/contas`, `/colaboradores`, `X-Conta` e autoria | Change `colaboradores` (4.1–4.3) |
 | `GET /admin/telas/usuarios`, `PATCH/DELETE /admin/usuarios/{id}` | Implementadas (10.2). Em `dev`, `PATCH` e `DELETE` respondem 400 `operacao_desconhecida` do users-service até a 10.4 dar à Lambda dele o User Pool e o barramento de eventos |
 
 ## Estrutura
 
 | Pacote | O que faz |
 | --- | --- |
-| `internal/api` | Rotas HTTP, autenticação (JWT por JWKS), checagem de `admin` em `/admin/*`, CORS local, log de requisições e recuperação de panic |
+| `internal/api` | Rotas HTTP, autenticação (JWT por JWKS), checagem de `admin` em `/admin/*`, conta ativa (`X-Conta`), CORS local, log de requisições e recuperação de panic |
 | `internal/me` | `GET /me`: obtém o perfil e, se não existir, cria com e-mail e nome do Cognito e papel dos grupos |
 | `internal/cognito` | Lê e-mail e nome com o próprio access token (`GetUser`) |
 | `internal/usuarios` | Client do users-service sobre o `invoke` da go-commons |
@@ -205,6 +220,7 @@ Variáveis da Lambda (`cmd/lambda`): `RUNTIME=aws`, `ENV=dev`, `LOG_LEVEL`, `COG
 6. Painel: `GET /telas/dashboard` do mês, antes do `DELETE`, com o gasto de teste nos últimos e cada visão da pizza somando 100%.
 6c. Parcelamento: `POST /gastos` em 2 parcelas no cartão de teste, reenviado com a mesma `chaveIdempotencia` (a mesma 1ª parcela volta), a 2/2 na lista da fatura seguinte e `DELETE ?escopo=TODAS`.
 7. Admin: `GET /admin/telas/usuarios` com o token do usuário de smoke test, que é cliente: 403 `somente_admin`.
+8. Colaboradores: `GET /contas` com a própria conta primeiro, `GET /colaboradores` com o limite de 5 e `X-Conta` de uma conta sem acesso: 404 `conta_nao_encontrada`.
 
 Os passos 2 e 3 dependem de duas mudanças no infra-base (PR #16). O `ci.yml` roda com `SMOKE_EXIGIR_TOKEN=1`, então a falta delas reprova o smoke test. Sem a variável, os passos são pulados com um aviso:
 
