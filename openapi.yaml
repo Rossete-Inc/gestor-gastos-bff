@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Gestor de Gastos — BFF
-  version: 0.2.0
+  version: 0.3.0
   description: |
     API do BFF do Gestor de Gastos. É a única API pública: o front chama só
     ela, e ela delega aos serviços por Lambda Invoke (ADR 0004).
@@ -165,6 +165,12 @@ paths:
         O grupo do gasto é o grupo da categoria escolhida. Categoria do grupo
         `CARTAO` exige `cartaoId`; `FIXO` aceita cartão opcional. Com cartão,
         o gasto entra no mês da fatura (`mesReferencia`).
+
+        Com `parcelamento`, cria todas as parcelas e devolve a primeira; com
+        `recorrencia`, cria a ocorrência do mês da data, e as dos meses
+        seguintes aparecem ao abrir cada mês. Reenviar o mesmo lançamento com
+        a mesma `chaveIdempotencia` devolve o gasto do primeiro envio sem
+        criar nada.
       requestBody:
         required: true
         content:
@@ -192,6 +198,13 @@ paths:
         Mesmas validações do lançamento. Trocar a categoria pode trocar o
         grupo; trocar a data ou o cartão recalcula o mês de referência e pode
         mudar o `id` do gasto. Manter o cartão atual vale mesmo arquivado.
+
+        Num gasto de série, `escopo` é obrigatório (422 no campo `escopo`).
+        Com `PROXIMAS` ou `TODAS`, só o dia da data vale para a série; mudar
+        o mês é 422 no campo `data`. `parcelamento`, `recorrencia` e
+        `chaveIdempotencia` são ignorados na edição.
+      parameters:
+        - $ref: "#/components/parameters/Escopo"
       requestBody:
         required: true
         content:
@@ -212,10 +225,17 @@ paths:
       tags: [gastos]
       operationId: excluirGasto
       summary: Excluir gasto
+      description: |
+        Num gasto de série, `escopo` é obrigatório: `PROXIMAS` apaga este e os
+        seguintes (encerra a recorrência) e `TODAS` apaga a série inteira.
+      parameters:
+        - $ref: "#/components/parameters/Escopo"
       responses:
         "204": { description: Gasto excluído }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /categorias:
@@ -511,6 +531,15 @@ components:
       required: false
       description: Itens por página.
       schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 20 }
+    Escopo:
+      name: escopo
+      in: query
+      required: false
+      description: |
+        Alcance num parcelamento ou recorrência: `ESTA` (só este gasto, que
+        fica ajustado), `PROXIMAS` (este e os seguintes) ou `TODAS`.
+        Obrigatório num gasto de série; ignorado no gasto avulso.
+      schema: { type: string, enum: [ESTA, PROXIMAS, TODAS] }
     IdPath:
       name: id
       in: path
@@ -696,12 +725,55 @@ components:
         data: { $ref: "#/components/schemas/Data" }
         categoriaId: { type: string, minLength: 1, maxLength: 64, example: alimentacao }
         descricao: { type: string, maxLength: 140, example: Almoço }
-        recorrente: { type: boolean, default: false, description: Só informativo no MVP }
+        recorrente:
+          type: boolean
+          default: false
+          description: Informativo, dos gastos anteriores às séries. Para repetir o gasto, use `recorrencia`.
         cartaoId:
           type: string
           minLength: 1
           maxLength: 64
           description: Cartão ativo do usuário. Obrigatório para categoria do grupo `CARTAO`; opcional para `FIXO`.
+        parcelamento: { $ref: "#/components/schemas/ParcelamentoIn" }
+        recorrencia: { $ref: "#/components/schemas/RecorrenciaIn" }
+        chaveIdempotencia:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Gerada pelo app a cada envio do formulário; repetir o envio não duplica o lançamento. Só no POST.
+
+    ParcelamentoIn:
+      type: object
+      description: |
+        Só no POST, sem `recorrencia`. No modo `TOTAL`, `valorCentavos` é o
+        total, dividido em `parcelas` com o resto na 1ª. No modo `PARCELA`,
+        `valorCentavos` é o valor de cada parcela, da `parcelaAtual` até
+        `parcelas` ou até o `mesFinal` (mês da fatura da última parcela).
+      required: [modo]
+      additionalProperties: false
+      properties:
+        modo: { type: string, enum: [TOTAL, PARCELA] }
+        parcelas: { type: integer, format: int32, minimum: 2, maximum: 72 }
+        parcelaAtual: { type: integer, format: int32, minimum: 1, maximum: 72, default: 1 }
+        mesFinal: { $ref: "#/components/schemas/Mes" }
+
+    RecorrenciaIn:
+      type: object
+      description: Só no POST, sem `parcelamento`. O gasto se repete todo mês, no mesmo dia, até o `mesFinal` (mês da data da última ocorrência) ou até ser encerrado.
+      additionalProperties: false
+      properties:
+        mesFinal: { $ref: "#/components/schemas/Mes" }
+
+    SerieGasto:
+      type: object
+      description: Posição do gasto num parcelamento ("3/10") ou numa recorrência.
+      required: [id, tipo, numero]
+      properties:
+        id: { type: string }
+        tipo: { type: string, enum: [PARCELAMENTO, RECORRENCIA] }
+        numero: { type: integer, format: int32, minimum: 1 }
+        total: { type: integer, format: int32, description: Total de parcelas; ausente na recorrência. }
+        ajustado: { type: boolean, description: Editado com o alcance "só esta". }
 
     Gasto:
       type: object
@@ -717,6 +789,7 @@ components:
         cartao: { $ref: "#/components/schemas/CartaoResumo" }
         descricao: { type: string }
         recorrente: { type: boolean }
+        serie: { $ref: "#/components/schemas/SerieGasto" }
 
     TelaGastos:
       type: object

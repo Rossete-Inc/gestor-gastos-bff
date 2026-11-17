@@ -24,7 +24,7 @@ func New(t invoke.Transport) *Client { return &Client{c: invoke.NewClient(t)} }
 
 // Criar lança um gasto. in.Grupo é o grupo da categoria, que o BFF obtém do
 // categories-service.
-func (c *Client) Criar(ctx context.Context, userID string, in contract.GastoIn) (contract.Gasto, error) {
+func (c *Client) Criar(ctx context.Context, userID string, in contract.CriarGastoIn) (contract.Gasto, error) {
 	var out contract.Gasto
 	err := c.c.Call(ctx, contract.OpCriarGasto, userID, in, &out)
 	return out, err
@@ -39,15 +39,15 @@ func (c *Client) Obter(ctx context.Context, userID, id string) (contract.Gasto, 
 
 // Atualizar substitui os dados de um gasto. Se a data muda, o gasto devolvido
 // tem outro ID.
-func (c *Client) Atualizar(ctx context.Context, userID, id string, in contract.GastoIn) (contract.Gasto, error) {
+func (c *Client) Atualizar(ctx context.Context, userID, id, escopo string, in contract.GastoIn) (contract.Gasto, error) {
 	var out contract.Gasto
-	err := c.c.Call(ctx, contract.OpAtualizarGasto, userID, contract.AtualizarGastoIn{ID: id, GastoIn: in}, &out)
+	err := c.c.Call(ctx, contract.OpAtualizarGasto, userID, contract.AtualizarGastoIn{ID: id, GastoIn: in, Escopo: escopo}, &out)
 	return out, err
 }
 
 // Excluir apaga um gasto do usuário.
-func (c *Client) Excluir(ctx context.Context, userID, id string) error {
-	return c.c.Call(ctx, contract.OpExcluirGasto, userID, contract.ExcluirGastoIn{ID: id}, nil)
+func (c *Client) Excluir(ctx context.Context, userID, id, escopo string) error {
+	return c.c.Call(ctx, contract.OpExcluirGasto, userID, contract.ExcluirGastoIn{ID: id, Escopo: escopo}, nil)
 }
 
 // Listar devolve uma página dos gastos do mês.
